@@ -40,11 +40,11 @@ export function L2ValidatorCard({ l1Transcript, l2RejectionReason = '', autoVali
 
       {error && <div className="text-xs text-red-400">{error}</div>}
 
-      {/* If auto mode, show stored (first) L2 reason and hide manual validate button */}
+      {/* Auto mode: show the actual L2 rejection reason for this interview */}
       {isAutoMode ? (
         <div className="space-y-2">
           <label className="block text-xs font-medium uppercase tracking-widest text-text-muted">
-            L2 Rejection Reason (Stored)
+            L2 Rejected Reason
           </label>
           <div className="w-full bg-white/[0.03] border border-white/[0.08] rounded px-3 py-2 text-sm text-text-primary">
             {String(l2RejectionReason)

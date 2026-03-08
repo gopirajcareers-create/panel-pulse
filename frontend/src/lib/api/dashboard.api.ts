@@ -147,13 +147,14 @@ export const dashboardApi = {
         jobId: body.jobId,
         panelName: body.panelName,
         candidateName: body.candidateName,
-        score: body.score,
+        score: body.score ?? 0,
         confidence: body.confidence,
         categories: body.categories,
         evidence: body.evidence,
         l2Validation: body.l2Validation,
+        l2RejectionReasons: body.l2RejectionReasons ?? [],
         evaluatedAt: body.evaluatedAt,
-        scoreCategory: body.score >= 8 ? 'Good' : body.score >= 5 ? 'Moderate' : 'Poor'
+        scoreCategory: (body.score ?? 0) >= 8 ? 'Good' : (body.score ?? 0) >= 5 ? 'Moderate' : 'Poor'
       };
     } catch (error) {
       console.error('Failed to fetch cached evaluation:', error);

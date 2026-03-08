@@ -2,14 +2,16 @@ import React from 'react';
 import { ProgressRing } from './ProgressRing';
 import { ScoreCategoryBadge } from './ScoreCategoryBadge';
 
+const MAX_SCORE = 11.0; // Sum of all dimension maxes
+
 interface Props {
-  score: number; // 0-10 scale expected
+  score: number;
   category: 'Poor' | 'Moderate' | 'Good' | null;
   subtitle?: string;
 }
 
 export function ScoreCard({ score, category, subtitle }: Props) {
-  const percent = Math.max(0, Math.min(100, (score / 10) * 100));
+  const percent = Math.max(0, Math.min(100, (score / MAX_SCORE) * 100));
 
   return (
     <div className="bg-bg-card rounded-lg border border-white/[0.06] p-4 flex items-center gap-4">
@@ -23,7 +25,9 @@ export function ScoreCard({ score, category, subtitle }: Props) {
           <ScoreCategoryBadge category={category} />
         </div>
 
-        <p className="text-3xl font-bold text-text-primary mt-2">{score.toFixed(1)}</p>
+        <p className="text-3xl font-bold text-text-primary mt-2">
+          {score.toFixed(1)}<span className="text-base font-normal text-text-muted"> / {MAX_SCORE.toFixed(1)}</span>
+        </p>
         {subtitle && <p className="text-sm text-text-muted mt-1 truncate">{subtitle}</p>}
       </div>
     </div>

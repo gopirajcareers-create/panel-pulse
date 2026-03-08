@@ -358,7 +358,7 @@ router.get('/stats', async (req, res) => {
       }
     }
 
-    const totalEvaluations = uniqueCombinations.size;
+    const totalEvaluations = allEvaluations.length;
     const averageScore = scoreCount > 0 ? Math.round((totalScore / scoreCount) * 10) / 10 : 0;
     const lastEvaluationDate = mostRecentDate 
       ? mostRecentDate.toISOString().split('T')[0]
@@ -608,6 +608,7 @@ router.get('/evaluation/:id', async (req, res) => {
         categories: evaluation.categories,
         evidence: evaluation.evidence,
         l2Validation: evaluation.l2_validation,
+        l2RejectionReasons: evaluation.l2_rejection_reasons || [],
         evaluatedAt: evaluation.evaluated_at
       },
       timestamp: new Date().toISOString()

@@ -3,7 +3,6 @@ import { SettingsModal } from '@/components/features/modals/SettingsModal';
 import { EvaluationHeader } from '@/components/features/evaluation/EvaluationHeader';
 import { ScoreCard } from '@/components/features/evaluation/ScoreCard';
 import DimensionGrid from '@/components/features/evaluation/DimensionGrid';
-import { EvidenceSection } from '@/components/features/evaluation/EvidenceSection';
 import { ExportButton } from '@/components/features/evaluation/ExportButton';
 import { L2ValidatorCard } from '@/components/features/l2-validation/L2ValidatorCard';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -31,23 +30,24 @@ export default function ResultsPage() {
 
   const liveRef = useRef<HTMLDivElement | null>(null);
 
-  // Load cached evaluation if evaluationId is provided (from dashboard link)
+  // Load evaluation from DB whenever evaluationId is in the URL (from dashboard link)
+  // Always fetch to ensure correct data is shown regardless of store state
   useEffect(() => {
-    if (evaluationId && !panelScore) {
-      setLoadingCached(true);
-      setFetchError(null);
-      dashboardApi.fetchCachedEvaluation(evaluationId)
-        .then(data => {
-          setCachedEvaluation(data);
-          setLoadingCached(false);
-        })
-        .catch(error => {
-          console.error('Failed to load cached evaluation:', error);
-          setFetchError(error?.response?.data?.error || error?.message || 'Failed to load evaluation details');
-          setLoadingCached(false);
-        });
-    }
-  }, [evaluationId, panelScore]);
+    if (!evaluationId) return;
+    setLoadingCached(true);
+    setFetchError(null);
+    setCachedEvaluation(null);
+    dashboardApi.fetchCachedEvaluation(evaluationId)
+      .then(data => {
+        setCachedEvaluation(data);
+        setLoadingCached(false);
+      })
+      .catch(error => {
+        console.error('Failed to load cached evaluation:', error);
+        setFetchError(error?.response?.data?.error || error?.message || 'Failed to load evaluation details');
+        setLoadingCached(false);
+      });
+  }, [evaluationId]);
 
   useEffect(() => {
     if (panelScore !== null && liveRef.current) {
@@ -71,6 +71,10 @@ export default function ResultsPage() {
   const displayScoreCategory = cachedEvaluation?.scoreCategory ?? scoreCategory;
   const displayTimestamp = cachedEvaluation?.evaluatedAt ?? timestamp;
   const displayJobId = cachedEvaluation?.jobId ?? jobId;
+  const displayL2Reasons: string[] = cachedEvaluation?.l2RejectionReasons?.length
+    ? cachedEvaluation.l2RejectionReasons
+    : l2RejectionReason ? [l2RejectionReason] : [];
+  const displayL1 = cachedEvaluation?.l1Transcript ?? l1Transcript ?? '';
 
   // Show error if fetch failed
   if (fetchError) {
@@ -88,7 +92,7 @@ export default function ResultsPage() {
     );
   }
 
-  if (displayScore === null && !isLoading && !loadingCached) {
+  if (!cachedEvaluation && displayScore === null && !isLoading && !loadingCached) {
     return (
       <AppShell>
         <SettingsModal />
@@ -137,15 +141,16 @@ export default function ResultsPage() {
             </div>
           </section>
 
-          {/* Evidence Section */}
-          <section>
-            <EvidenceSection evidence={displayEvidence} />
-          </section>
+          {/* Evidence Section - REMOVED (shown per-dimension in DimensionGrid) */}
 
           {/* L2 Validation Section */}
-          {l1Transcript && l2RejectionReason && (
+          {displayL2Reasons.length > 0 && (
             <section>
-              <L2ValidatorCard l1Transcript={l1Transcript} l2RejectionReason={l2RejectionReason} autoValidate={true} />
+              <L2ValidatorCard
+                l1Transcript={displayL1}
+                l2RejectionReason={displayL2Reasons[0]}
+                autoValidate={true}
+              />
             </section>
           )}
         </div>

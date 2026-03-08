@@ -33,16 +33,15 @@ function mapBackendToPanelScore(body: any, request: UploadRequest): PanelEfficie
 
   const evidence: Record<string, string[]> = {};
   const rawEvidence: any = full.evidence ?? body.evidence ?? {};
-  // Normalize evidence: backend may return array of quotes or object keyed by category
+  // LLM now returns evidence as object keyed by category name
   if (Array.isArray(rawEvidence)) {
+    // Legacy flat array — store under 'general' (will not show in dimension cards)
     evidence['general'] = rawEvidence.map((e: any) => sanitizeText(e?.quote ?? String(e)));
   } else if (typeof rawEvidence === 'object' && rawEvidence !== null) {
     for (const [k, v] of Object.entries(rawEvidence)) {
       if (Array.isArray(v)) evidence[k] = v.map((x: any) => sanitizeText(String(x)));
-      else evidence[k] = [sanitizeText(String(v))];
+      else if (v) evidence[k] = [sanitizeText(String(v))];
     }
-  } else {
-    evidence['general'] = [sanitizeText(String(rawEvidence))];
   }
 
   const scoreCategory = numericScore >= 8 ? 'Good' : numericScore >= 5 ? 'Moderate' : 'Poor';

@@ -7,17 +7,19 @@
 
 const axios = require('axios');
 
-// Panel scoring configuration
+// Panel scoring configuration — max scores per dimension; final score = SUM of all
 const PANEL_DIMENSIONS = {
-  'Mandatory Skill Coverage': { max: 10, weight: 0.15 },
-  'Technical Depth': { max: 10, weight: 0.20 },
-  'Scenario / Risk Evaluation': { max: 10, weight: 0.15 },
-  'Framework Knowledge': { max: 10, weight: 0.10 },
-  'Hands-on Validation': { max: 10, weight: 0.15 },
-  'Leadership Evaluation': { max: 10, weight: 0.10 },
-  'Behavioral Assessment': { max: 10, weight: 0.10 },
-  'Interview Structure': { max: 10, weight: 0.05 }
+  'Mandatory Skill Coverage': { max: 2.0 },
+  'Technical Depth':          { max: 1.5 },
+  'Scenario / Risk Evaluation':{ max: 1.0 },
+  'Framework Knowledge':      { max: 1.0 },
+  'Hands-on Validation':      { max: 1.0 },
+  'Leadership Evaluation':    { max: 1.0 },
+  'Behavioral Assessment':    { max: 1.0 },
+  'Interview Structure':      { max: 1.5 }
 };
+// Maximum possible panel score (sum of all dimension maxes)
+const MAX_PANEL_SCORE = Object.values(PANEL_DIMENSIONS).reduce((s, d) => s + d.max, 0); // 11.0
 
 // System prompts
 const PANEL_SCORING_SYSTEM_PROMPT = `You are an expert panel evaluator assessing interview candidates. 
@@ -71,7 +73,8 @@ async function performPanelEvaluation(input) {
       categories: evaluation.categories,
       confidence: evaluation.confidence,
       evidence: evaluation.evidence,
-      l2_validation: evaluation.l2_validation
+      l2_validation: evaluation.l2_validation,
+      l2_rejection_reasons
     });
 
     return {
@@ -150,7 +153,8 @@ function _buildPanelScoringPrompt(job_id, jd, l1_transcripts, l2_rejection_reaso
     ? `\n\nL2 Rejection Reasons:\n${l2_rejection_reasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}`
     : '';
 
-  return `Evaluate this candidate's interview performance.
+  return `You are evaluating PANEL EFFICIENCY — how well the INTERVIEWER/PANEL probed the candidate.
+Focus on the INTERVIEWER's questions and probing depth, NOT the candidate's answers.
 
 Job ID: ${job_id}
 
@@ -159,34 +163,45 @@ ${jd}
 
 ${transcriptText}${reasonsText}
 
-Return a JSON object with:
+Score each dimension based on how thoroughly the PANEL covered it through their questions.
+Each dimension has its own maximum score — score within that range ONLY.
+
+Return ONLY a valid JSON object (no extra text):
 {
   "job_id": "${job_id}",
-  "score": <0-10>,
+  "score": <sum of all category scores>,
   "confidence": <0-1>,
   "categories": {
-    "Mandatory Skill Coverage": <0-10>,
-    "Technical Depth": <0-10>,
-    "Scenario / Risk Evaluation": <0-10>,
-    "Framework Knowledge": <0-10>,
-    "Hands-on Validation": <0-10>,
-    "Leadership Evaluation": <0-10>,
-    "Behavioral Assessment": <0-10>,
-    "Interview Structure": <0-10>
+    "Mandatory Skill Coverage": <0 to 2.0>,
+    "Technical Depth": <0 to 1.5>,
+    "Scenario / Risk Evaluation": <0 to 1.0>,
+    "Framework Knowledge": <0 to 1.0>,
+    "Hands-on Validation": <0 to 1.0>,
+    "Leadership Evaluation": <0 to 1.0>,
+    "Behavioral Assessment": <0 to 1.0>,
+    "Interview Structure": <0 to 1.5>
   },
-  "evidence": [
-    {
-      "quote": "exact transcript excerpt",
-      "source": "transcript_1:line_range",
-      "timestamp": "ISO timestamp"
-    }
-  ],
+  "evidence": {
+    "Mandatory Skill Coverage": ["Interviewer question or probing statement that covered this dimension"],
+    "Technical Depth": ["Interviewer question or probing statement"],
+    "Scenario / Risk Evaluation": ["Interviewer question or probing statement"],
+    "Framework Knowledge": ["Interviewer question or probing statement"],
+    "Hands-on Validation": ["Interviewer question or probing statement"],
+    "Leadership Evaluation": ["Interviewer question or probing statement"],
+    "Behavioral Assessment": ["Interviewer question or probing statement"],
+    "Interview Structure": ["Interviewer question or probing statement"]
+  },
   "probing_verdict": "NO_PROBING|SURFACE_PROBING|DEEP_PROBING",
   "l2_validation": {
-    "matches_evidence": true/false,
+    "matches_evidence": true,
     "notes": "brief notes"
   }
-}`;
+}
+
+IMPORTANT:
+- Evidence must only quote the INTERVIEWER/PANEL lines (lines starting with 'Interviewer:' or 'Panel:')
+- If a dimension was NOT covered by the panel, set its score to 0 and evidence array to []
+- The top-level "score" MUST equal the exact sum of all category scores`;
 }
 
 /**
@@ -298,15 +313,16 @@ function _parseAndValidatePanelScore(response, job_id) {
       parsed.job_id = job_id;
     }
 
-    // Calculate overall score from category scores
-    if (!parsed.score || parsed.score === 0) {
-      let weightedScore = 0;
-      for (const [category, weight] of Object.entries(_getDimensionWeights())) {
-        if (parsed.categories && parsed.categories[category]) {
-          weightedScore += parsed.categories[category] * weight;
-        }
+    // Recalculate score as SUM of category scores (authoritative)
+    if (parsed.categories) {
+      let sum = 0;
+      for (const [dim, config] of Object.entries(PANEL_DIMENSIONS)) {
+        const catScore = parsed.categories[dim] || 0;
+        // Clamp each dimension score to its maximum
+        parsed.categories[dim] = Math.min(parseFloat(catScore.toFixed(2)), config.max);
+        sum += parsed.categories[dim];
       }
-      parsed.score = Math.round(weightedScore * 10) / 10; // Round to 1 decimal
+      parsed.score = Math.round(sum * 10) / 10;
     }
 
     // Ensure confidence is present
@@ -394,21 +410,8 @@ function _parseL2ValidationResponse(response) {
 }
 
 /**
- * Get dimension weights
- * 
- * @private
- */
-function _getDimensionWeights() {
-  const weights = {};
-  for (const [dim, config] of Object.entries(PANEL_DIMENSIONS)) {
-    weights[dim] = config.weight;
-  }
-  return weights;
-}
-
-/**
  * Validate panel evaluation structure
- * 
+ *
  * @private
  */
 function _validatePanelStructure(obj) {
@@ -417,8 +420,8 @@ function _validatePanelStructure(obj) {
     throw new Error('Invalid or missing job_id');
   }
 
-  if (typeof obj.score !== 'number' || obj.score < 0 || obj.score > 10) {
-    throw new Error('Score must be between 0 and 10');
+  if (typeof obj.score !== 'number' || obj.score < 0 || obj.score > MAX_PANEL_SCORE + 0.5) {
+    throw new Error(`Score must be between 0 and ${MAX_PANEL_SCORE}`);
   }
 
   if (typeof obj.confidence !== 'number' || obj.confidence < 0 || obj.confidence > 1) {
@@ -461,6 +464,7 @@ async function _storeEvaluationInDB(evaluationData) {
       categories: evaluationData.categories,
       evidence: evaluationData.evidence,
       l2_validation: evaluationData.l2_validation,
+      l2_rejection_reasons: evaluationData.l2_rejection_reasons || [],
       evaluated_at: new Date().toISOString(),
       created_at: new Date()
     };
