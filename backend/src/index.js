@@ -55,7 +55,9 @@ async function start() {
       console.log(`\n✅ Server running on http://localhost:${port}`);
       console.log(`📍 Environment: ${NODE_ENV}`);
       console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
-      console.log(`📊 API Base: http://localhost:${port}/api/v1\n`);
+      console.log(`📊 API Base: http://localhost:${port}/api/v1`);
+      console.log(`🤖 GROQ configured: ${!!process.env.GROQ_API_KEY}`);
+      console.log(`🗄️  MongoDB URI set: ${!!process.env.MONGODB_URI}\n`);
     });
   } catch (err) {
     console.error('❌ Failed to start server:', err);
