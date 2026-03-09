@@ -382,9 +382,9 @@ router.get('/stats', async (req, res) => {
     // Score distribution based on actual scores
     const scores = allEvaluations.map(e => e.score).filter(s => s !== undefined && s !== null);
     const distribution = [
-      { range: '0-5', count: scores.filter(s => s > 0 && s <= 5).length },
-      { range: '5-8', count: scores.filter(s => s > 5 && s <= 8).length },
-      { range: '8-10', count: scores.filter(s => s > 8 && s <= 10).length }
+      { range: '0-5', count: scores.filter(s => s >= 0 && s < 5).length },
+      { range: '5-8', count: scores.filter(s => s >= 5 && s < 8).length },
+      { range: '8-10', count: scores.filter(s => s >= 8 && s <= 10).length }
     ];
 
     return res.status(200).json({
@@ -475,7 +475,7 @@ router.get('/search', async (req, res) => {
     ];
 
     for (const range of ranges) {
-      const count = scores.filter(s => s > range.min && s <= range.max).length;
+      const count = scores.filter(s => s >= range.min && (range.max === 10 ? s <= range.max : s < range.max)).length;
       distribution.push({ range: range.label, count });
     }
 

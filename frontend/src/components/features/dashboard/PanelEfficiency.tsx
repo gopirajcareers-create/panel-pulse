@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { TrendingUp, Users } from 'lucide-react';
 import { dashboardApi, type PanelEfficiency as PanelEfficiencyType, type PanelEfficiencyResponse } from '@/lib/api/dashboard.api';
 
 export function PanelEfficiency() {
@@ -32,36 +31,7 @@ export function PanelEfficiency() {
   }
 
   return (
-    <div className="flex flex-col space-y-6">
-      {/* Overall Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-card">
-        <div className="bg-gradient-to-br from-accent-primary/5 to-accent-secondary/5 border border-border-primary rounded-card p-card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-metric-label text-text-secondary uppercase tracking-widest mb-2">Total Panel Evaluated</p>
-              <p className="text-metric-value text-text-primary font-bold">{data.totalPanels}</p>
-              <p className="text-text-secondary text-sm mt-2">Unique panels assessed</p>
-            </div>
-            <div className="bg-accent-primary/10 rounded-card-lg p-3 flex-shrink-0">
-              <TrendingUp className="w-6 h-6 text-accent-primary" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-gradient-to-br from-accent-success/5 to-accent-primary/5 border border-border-primary rounded-card p-card">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-metric-label text-text-secondary uppercase tracking-widest mb-2">Total Evaluations</p>
-              <p className="text-metric-value text-text-primary font-bold">{data.totalEvaluations}</p>
-              <p className="text-text-secondary text-sm mt-2">Across all panels</p>
-            </div>
-            <div className="bg-accent-success/10 rounded-card-lg p-3 flex-shrink-0">
-              <Users className="w-6 h-6 text-accent-success" />
-            </div>
-          </div>
-        </div>
-      </div>
-
+    <div className="flex flex-col">
       {/* Panel Details Table */}
       <div className="border border-border-primary rounded-card overflow-hidden">
         <div className="p-card border-b border-border-primary bg-bg-surface">

@@ -16,7 +16,7 @@ interface EvaluationsListProps {
 
 function getScoreBadgeClass(score: number): string {
   if (score >= 8) return 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
-  if (score >= 4) return 'bg-orange-500/20 text-orange-300 border border-orange-500/30';
+  if (score >= 5) return 'bg-orange-500/20 text-orange-300 border border-orange-500/30';
   return 'bg-red-500/20 text-red-300 border border-red-500/30';
 }
 
