@@ -19,9 +19,27 @@ export default function DashboardPage() {
   const [totalPanels, setTotalPanels] = useState(0);
 
   useEffect(() => {
-    fetchStats();
-    loadAllEvaluations();
-    loadTotalPanels();
+    const loadData = async () => {
+      try {
+        await fetchStats();
+      } catch (err) {
+        console.error('Failed to fetch stats:', err);
+      }
+      
+      try {
+        await loadAllEvaluations();
+      } catch (err) {
+        console.error('Failed to load evaluations:', err);
+      }
+      
+      try {
+        await loadTotalPanels();
+      } catch (err) {
+        console.error('Failed to load total panels:', err);
+      }
+    };
+    
+    loadData();
   }, [fetchStats]);
 
   const loadTotalPanels = async () => {
