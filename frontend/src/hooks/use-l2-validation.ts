@@ -6,6 +6,7 @@ import { useEvaluationStore } from '@/lib/stores/evaluation.store';
 export interface L2ValidationResult {
   probingDepth: 'NO PROBING' | 'SURFACE PROBING' | 'DEEP PROBING';
   matchedQuestions: string[];
+  justifications?: Record<string, string[]>;
   validated: boolean;
   confidence: number;
 }
@@ -33,9 +34,13 @@ function transformBackendResponse(backendData: any): L2ValidationResult {
     ? evidence.map((e: any) => e.quote || e).filter((q: any) => q)
     : [];
 
+  // Extract justifications
+  const justifications = backendData.full_validation?.justifications || backendData.justifications;
+
   return {
     probingDepth,
     matchedQuestions,
+    justifications,
     validated: true,
     confidence: backendData.confidence || 0.5,
   };

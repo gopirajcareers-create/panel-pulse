@@ -2,6 +2,8 @@ import React, { useEffect } from 'react';
 import { useL2Validation } from '@/hooks/use-l2-validation';
 import { ProbingDepthBadge } from './ProbingDepthBadge';
 import { ValidationEvidence } from './ValidationEvidence';
+import { Info } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface Props {
   l1Transcript: string;
@@ -80,6 +82,8 @@ export function L2ValidatorCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoValidate, cleanedReason, l1Transcript]);
 
+  const [showTooltip, setShowTooltip] = React.useState(false);
+
   if (!cleanedReason && !result) return null;
 
   return (
@@ -104,17 +108,42 @@ export function L2ValidatorCard({
           <p className="text-xs font-medium uppercase tracking-widest text-red-400/80 mb-2">
             Rejection Reason
           </p>
-          <ul className="space-y-1.5">
+          <ul className="space-y-3">
             {cleanedReason
               .split(',')
               .map((r) => r.trim())
               .filter(Boolean)
-              .map((reason, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-red-200 leading-snug">
-                  <span className="mt-1.5 shrink-0 w-1.5 h-1.5 rounded-full bg-red-400/70" />
-                  {reason}
-                </li>
-              ))}
+              .map((reason, i) => {
+                const jf = result?.justifications?.[reason];
+                return (
+                  <li key={i} className="space-y-1.5">
+                    <div className="flex items-start gap-2 text-sm text-red-200 leading-snug">
+                      <span className="mt-1.5 shrink-0 w-1.5 h-1.5 rounded-full bg-red-400/70" />
+                      {reason}
+                    </div>
+                    {jf && (
+                      <div className="ml-3.5 space-y-2">
+                        {/* Summary Justification (One line) */}
+                        {typeof jf === 'object' && !Array.isArray(jf) && (jf as any).summary && (
+                          <div className="text-[11px] text-red-100 font-medium leading-relaxed">
+                            {(jf as any).summary}
+                          </div>
+                        )}
+                        
+                        {/* Evidence Points */}
+                        <div className="space-y-1">
+                          {(Array.isArray(jf) ? jf : ((jf as any).points || [])).map((point: string, idx: number) => (
+                            <div key={idx} className="text-[11px] text-red-300/60 flex items-start gap-1.5 italic">
+                              <span className="mt-1 shrink-0">→</span>
+                              {point}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
           </ul>
         </div>
       )}
@@ -132,9 +161,37 @@ export function L2ValidatorCard({
         <div className="space-y-4 pt-2 border-t border-white/[0.06]">
           {/* Probing depth */}
           <div>
-            <p className="text-xs font-medium uppercase tracking-widest text-text-muted mb-1.5">
-              Probing Depth
-            </p>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <p className="text-xs font-medium uppercase tracking-widest text-text-muted">
+                Probing Depth
+              </p>
+              <div className="relative">
+                <button 
+                  onMouseEnter={() => setShowTooltip(true)}
+                  onMouseLeave={() => setShowTooltip(false)}
+                  className="p-0.5 rounded-full hover:bg-white/10 transition-colors text-text-muted"
+                >
+                  <Info className="w-3 h-3" />
+                </button>
+                <AnimatePresence>
+                  {showTooltip && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: 5 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95, y: 5 }}
+                      className="absolute left-0 top-full mt-2 w-72 p-4 bg-[#09090b] border border-white/20 rounded-lg shadow-2xl z-50 text-[11px] leading-relaxed text-text-secondary"
+                    >
+                      <ul className="space-y-2.5">
+                        <li><strong className="text-emerald-400 uppercase font-bold">Deep Probing:</strong> Panelist asked multiple follow-up questions, edge cases, and technical "why/how" scenarios.</li>
+                        <li><strong className="text-orange-400 uppercase font-bold">Surface Probing:</strong> Panelist asked standard questions but didn't push for deeper technical complexity.</li>
+                        <li><strong className="text-gray-400 uppercase font-bold">No Probing:</strong> Topics were mentioned but not explored or questions were accepted at face value.</li>
+                      </ul>
+                      <div className="absolute -top-1 left-3 w-2.5 h-2.5 bg-[#09090b] border-t border-l border-white/20 rotate-45" />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
             <ProbingDepthBadge depth={result.probingDepth} />
           </div>
 

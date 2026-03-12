@@ -131,7 +131,7 @@ export default function ResultsPage() {
             candidateName={cachedEvaluation?.candidateName}
             evaluationId={evaluationId}
             score={displayScore ?? 0}
-            categories={displayDimensions as Record<string, number> | null}
+            categories={(displayDimensions as Record<string, number>) || undefined}
             evaluationData={cachedEvaluation}
           />
 
@@ -152,11 +152,12 @@ export default function ResultsPage() {
           </section>
 
           {/* JD Skills + Panel Summary row */}
-          {(cachedEvaluation?.refinedJd || cachedEvaluation?.panelSummary) && (
+          {(cachedEvaluation?.refinedJd || cachedEvaluation?.panelSummary || cachedEvaluation?.gapAnalysis || useEvaluationStore.getState().panelSummary) && (
             <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <JdSkillsCard refinedJd={cachedEvaluation.refinedJd} />
+              <JdSkillsCard refinedJd={cachedEvaluation?.refinedJd} />
               <PanelSummaryCard
-                summary={cachedEvaluation.panelSummary}
+                summary={cachedEvaluation?.panelSummary || (cachedEvaluation ? null : useEvaluationStore.getState().panelSummary)}
+                gapAnalysis={cachedEvaluation?.gapAnalysis || (cachedEvaluation ? null : useEvaluationStore.getState().gapAnalysis)}
                 scoreCategory={displayScoreCategory}
               />
             </section>
