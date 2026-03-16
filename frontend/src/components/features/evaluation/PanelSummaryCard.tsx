@@ -40,10 +40,21 @@ export function PanelSummaryCard({ summary, gapAnalysis, scoreCategory }: Props)
           ].some(h => cleanLine.startsWith(h));
 
           if (isHeader) {
+            const headerText = [
+              'Panel Member Behavior:',
+              'Interview Process:',
+              'Rejection Reason Validation:',
+              'Identification Gap:',
+              'Overall Effectiveness:'
+            ].find(h => cleanLine.startsWith(h)) || '';
+            
+            const contentText = cleanLine.substring(headerText.length).trim();
+
             return (
-              <p key={i} className="text-sm font-bold text-orange-400 mt-2 first:mt-0">
-                {cleanLine}
-              </p>
+              <div key={i} className="text-sm mt-2 first:mt-0 leading-relaxed">
+                <span className="font-bold text-orange-400">{headerText}</span>{' '}
+                {contentText && <span className="text-text-primary">{contentText}</span>}
+              </div>
             );
           }
 

@@ -25,18 +25,18 @@ const navItems: NavItem[] = [
     description: 'Upload & score',
   },
   {
-    id: 'chat',
-    icon: <MessageSquare className="w-5 h-5" />,
-    label: 'Chat',
-    path: '/chat',
-    description: 'Ask the AI',
-  },
-  {
     id: 'panels',
     icon: <Users className="w-5 h-5" />,
     label: 'Panel Insights',
     path: '/panels',
     description: 'Interviewer directory',
+  },
+  {
+    id: 'chat',
+    icon: <MessageSquare className="w-5 h-5" />,
+    label: 'Chat',
+    path: '/chat',
+    description: 'Ask the AI',
   },
 ];
 

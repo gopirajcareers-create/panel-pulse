@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Info } from 'lucide-react';
 import { ProgressRing } from './ProgressRing';
 import { dashboardApi } from '@/lib/api/dashboard.api';
 
@@ -44,7 +45,18 @@ export function ScoreCard({ score, category, panelName, subtitle }: Props) {
     <div className="bg-bg-card rounded-xl border border-white/[0.06] p-5 space-y-4">
       {/* Title + badge */}
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold text-text-primary">Panel Efficiency</h3>
+        <div className="flex items-center gap-2 group relative">
+          <h3 className="text-base font-semibold text-text-primary">Panel Efficiency</h3>
+          <Info className="w-4 h-4 text-text-muted cursor-help" />
+          <div className="absolute left-0 top-full mt-2 w-64 p-3 bg-[#111118] border border-white/10 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+            <p className="text-xs font-semibold text-text-primary mb-2">Score Categories:</p>
+            <ul className="space-y-1.5 text-xs text-text-secondary">
+              <li><strong className="text-emerald-400">Good (8.0 - 10.0):</strong> Excellent thorough validation.</li>
+              <li><strong className="text-orange-400">Moderate (5.0 - 7.9):</strong> Acceptable but with notable gaps.</li>
+              <li><strong className="text-red-400">Poor (0.0 - 4.9):</strong> Insufficient or superficial probing.</li>
+            </ul>
+          </div>
+        </div>
         <CategoryBadge category={category} />
       </div>
 

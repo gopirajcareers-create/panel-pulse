@@ -123,7 +123,13 @@ export function ExportButton({
         const isHeader = headers.some(h => clean.startsWith(h));
 
         if (isHeader) {
-          return `<p style="font-size:11px;font-weight:700;color:#f97316;margin:8px 0 4px">${esc(clean)}</p>`;
+          const headerText = headers.find(h => clean.startsWith(h)) || '';
+          const contentText = clean.substring(headerText.length).trim();
+          
+          return `<div style="font-size:11px;line-height:1.5;margin:8px 0 4px;">
+                    <span style="font-weight:700;color:#f97316;">${esc(headerText)}</span>
+                    ${contentText ? `<span style="color:#374151;margin-left:4px;">${esc(contentText)}</span>` : ''}
+                  </div>`;
         }
         return `<div style="font-size:11px;color:#374151;line-height:1.5;margin:2px 0;padding-left:10px;position:relative;">
                   <span style="position:absolute;left:0;color:#f97316;">•</span>
