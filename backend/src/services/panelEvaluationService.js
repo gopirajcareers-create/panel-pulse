@@ -250,7 +250,11 @@ ${jd}
 ${transcriptText}${reasonsText}
 
 Score each dimension based on how thoroughly the PANEL covered it through their questions.
-For "Rejection Validation Alignment", score high (2.0) ONLY if the panelist deeply probed the exact areas marked in the L2 Rejection Reasons. Score low (0.0) if they missed or glossed over those weaknesses.
+For "Rejection Validation Alignment", assign a precise decimal score based on the Probing Depth verdict:
+- If DEEP_PROBING: Score between 1.5 and 2.0 (e.g., 2.0 for exhaustive probing, 1.7 for strong but slightly incomplete probing).
+- If SURFACE_PROBING: Score between 0.5 and 1.4 (e.g., 1.0 for basic probing, 1.4 for decent but not deep).
+- If NO_PROBING: Score between 0.0 and 0.4 (e.g., 0.0 for missing it entirely, 0.2 for a very faint, incidental mention).
+Do not just give round numbers; evaluate the exact quality of the alignment.
 Each dimension has its own maximum score — score within that range ONLY.
 
 Return ONLY a valid JSON object (no extra text):
