@@ -16,6 +16,9 @@ echo "========================================"
 echo ""
 echo "▶ [1/4] Pulling latest code from main..."
 cd "$APP_DIR"
+# Discard any local changes so the pull is never blocked by conflicts.
+# The VM should always match the repo; secrets live in .env (untracked).
+git checkout -- .
 git pull origin main
 
 # ── Backend: install deps ────────────────────────────────────
