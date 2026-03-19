@@ -1,16 +1,20 @@
 require('dotenv').config();
 const express = require('express');
 const morgan = require('morgan');
+const cookieParser = require('cookie-parser');
 const healthRoutes = require('./routes/health');
 const embeddingsRoutes = require('./routes/embeddings');
 const searchRoutes = require('./routes/search');
 const jdRoutes = require('./routes/jd');
 const panelRoutes = require('./routes/panel');
 const chatRoutes = require('./routes/chat');
+const authRoutes = require('./routes/auth');
+const requireAuth = require('./middleware/requireAuth');
 const { connectToMongo } = require('./services/mongoClient');
 
 const app = express();
 app.use(morgan('tiny'));
+app.use(cookieParser());
 app.use(express.json());
 
 // Environment variables with defaults for development
@@ -37,16 +41,23 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   const requestedHeaders = req.header('access-control-request-headers');
   res.setHeader('Access-Control-Allow-Headers', requestedHeaders || 'Content-Type, Authorization, X-Request-ID, X-Requested-With');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
+// Auth routes (public — no requireAuth)
+app.use('/api/v1/auth', authRoutes);
+
+// Health (public)
 app.use('/api/v1/health', healthRoutes);
-app.use('/api/v1/embeddings', embeddingsRoutes);
-app.use('/api/v1/search', searchRoutes);
-app.use('/api/v1/jd', jdRoutes);
-app.use('/api/v1/panel', panelRoutes);
-app.use('/api/v1/chat', chatRoutes);
+
+// Protected routes
+app.use('/api/v1/embeddings', requireAuth, embeddingsRoutes);
+app.use('/api/v1/search', requireAuth, searchRoutes);
+app.use('/api/v1/jd', requireAuth, jdRoutes);
+app.use('/api/v1/panel', requireAuth, panelRoutes);
+app.use('/api/v1/chat', requireAuth, chatRoutes);
 
 const port = PORT;
 
