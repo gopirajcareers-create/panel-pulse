@@ -166,11 +166,9 @@ export default function LoginPage() {
           </div>
           <h1 className="text-2xl font-bold text-text-primary">Panel Pulse AI</h1>
           <p className="text-sm text-text-muted mt-1">Internal tool for Indium Software</p>
-          {import.meta.env.DEV && (
-            <p className="text-[10px] text-accent-primary font-mono mt-2 opacity-50">
-              API: {import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}
-            </p>
-          )}
+          <p className="text-[10px] text-accent-primary font-mono mt-2 opacity-70">
+            API: {import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}
+          </p>
         </div>
 
         {/* Card */}
@@ -244,13 +242,13 @@ export default function LoginPage() {
                 </p>
               </div>
               
-              {/* Test OTP (Development only) */}
+              {/* Test OTP (Always show during this test phase) */}
               {testOtp && (
-                <div className="bg-accent-primary/5 border border-accent-primary/20 rounded-xl p-4 text-center">
-                  <p className="text-[10px] text-text-muted uppercase tracking-[0.2em] font-bold mb-2">
-                    Testing Verification Code
+                <div className="bg-accent-primary border border-accent-primary/20 rounded-xl p-4 text-center shadow-lg">
+                  <p className="text-[10px] text-white uppercase tracking-[0.2em] font-bold mb-2">
+                    Enter this Verification Code
                   </p>
-                  <div className="text-3xl font-mono font-bold text-accent-primary tracking-[0.3em] bg-bg-surface py-2 rounded-lg border border-border-primary/50">
+                  <div className="text-3xl font-mono font-bold text-accent-primary tracking-[0.3em] bg-white py-2 rounded-lg border border-border-primary/50">
                     {testOtp}
                   </div>
                 </div>
