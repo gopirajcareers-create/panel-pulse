@@ -2,7 +2,14 @@ import axios, { AxiosError } from 'axios';
 import type { AxiosInstance } from 'axios';
 import toast from 'react-hot-toast';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+let API_BASE_URL = import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+
+// Force local backend if running on localhost to avoid production redirects during testing
+if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+  API_BASE_URL = 'http://localhost:3000';
+}
+
+export { API_BASE_URL };
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,

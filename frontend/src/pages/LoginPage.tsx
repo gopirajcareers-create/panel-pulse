@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mail, ArrowRight, RefreshCw, CheckCircle, Loader2 } from 'lucide-react';
-import { apiClient } from '@/lib/api/client';
+import { CheckCircle, Mail, KeyRound, AlertCircle, Loader2, ArrowRight, RefreshCw } from 'lucide-react';
+import { API_BASE_URL, apiClient } from '@/lib/api/client';
 import { useAuth } from '@/context/AuthContext';
 import type { AuthUser } from '@/context/AuthContext';
 
@@ -167,7 +167,7 @@ export default function LoginPage() {
           <h1 className="text-2xl font-bold text-text-primary">Panel Pulse AI</h1>
           <p className="text-sm text-text-muted mt-1">Internal tool for Indium Software</p>
           <p className="text-[10px] text-accent-primary font-mono mt-2 opacity-70">
-            API: {import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}
+            API: {API_BASE_URL}
           </p>
         </div>
 
