@@ -95,7 +95,10 @@ export const dashboardApi = {
     panelName?: string,
     candidateName?: string,
     limit: number = 50,
-    skip: number = 0
+    skip: number = 0,
+    sortBy: string = 'created_at',
+    order: 'asc' | 'desc' = 'desc',
+    scoreFilter: string = 'all'
   ): Promise<SearchResponse> {
     try {
       const params = new URLSearchParams();
@@ -104,6 +107,9 @@ export const dashboardApi = {
       if (candidateName) params.append('candidate_name', candidateName);
       params.append('limit', String(limit));
       params.append('skip', String(skip));
+      params.append('sort_by', sortBy);
+      params.append('order', order);
+      params.append('score_filter', scoreFilter);
 
       const resp = await apiClient.get(`/api/v1/panel/search?${params.toString()}`);
       const body = resp.data?.data ?? resp.data ?? {};

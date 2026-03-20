@@ -425,7 +425,7 @@ router.get('/search', async (req, res) => {
     const db = await getDb();
     const evalCollection = db.collection('panel_evaluations');
 
-    const { job_interview_id, panel_name, candidate_name, limit = '50', skip = '0' } = req.query;
+    const { job_interview_id, panel_name, candidate_name, limit = '50', skip = '0', sort_by = 'created_at', order = 'desc', score_filter = 'all' } = req.query;
     const limitNum = Math.min(parseInt(limit, 10) || 50, 100);
     const skipNum = Math.max(parseInt(skip, 10) || 0, 0);
 
@@ -441,12 +441,28 @@ router.get('/search', async (req, res) => {
       filter['Candidate Name'] = { $regex: candidate_name, $options: 'i' };
     }
 
+    // Add score range filtering
+    if (score_filter === 'good') {
+      filter['score'] = { $gte: 8 };
+    } else if (score_filter === 'moderate') {
+      filter['score'] = { $gte: 5, $lt: 8 };
+    } else if (score_filter === 'low' || score_filter === 'poor') {
+      filter['score'] = { $lt: 5 };
+    }
+
+    // Map frontend sort keys to database field names
+    let sortField = sort_by;
+    if (sort_by === 'jobInterviewId') sortField = 'Job Interview ID';
+    if (sort_by === 'averageScore') sortField = 'score';
+    
+    const sortOrder = order === 'asc' ? 1 : -1;
+
     // Get total matching records
     const total = await evalCollection.countDocuments(filter);
 
     // Get filtered documents
     const results = await evalCollection.find(filter)
-      .sort({ created_at: -1 })
+      .sort({ [sortField]: sortOrder })
       .skip(skipNum)
       .limit(limitNum)
       .toArray();

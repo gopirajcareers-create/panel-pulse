@@ -184,7 +184,7 @@ export function L2ValidatorCard({
                       <ul className="space-y-2.5">
                         <li><strong className="text-emerald-400 uppercase font-bold">Deep Probing:</strong> Panelist asked multiple follow-up questions, edge cases, and technical "why/how" scenarios.</li>
                         <li><strong className="text-orange-400 uppercase font-bold">Surface Probing:</strong> Panelist asked standard questions but didn't push for deeper technical complexity.</li>
-                        <li><strong className="text-gray-400 uppercase font-bold">No Probing:</strong> Topics were mentioned but not explored or questions were accepted at face value.</li>
+                        <li><strong className="text-red-400 uppercase font-bold">No Probing:</strong> Topics were mentioned but not explored or questions were accepted at face value.</li>
                       </ul>
                       <div className="absolute -top-1 left-3 w-2.5 h-2.5 bg-[#09090b] border-t border-l border-white/20 rotate-45" />
                     </motion.div>

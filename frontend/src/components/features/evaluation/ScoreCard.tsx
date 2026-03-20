@@ -29,17 +29,6 @@ function CategoryBadge({ category }: { category: 'Poor' | 'Moderate' | 'Good' | 
 
 export function ScoreCard({ score, category, panelName, subtitle }: Props) {
   const percent = Math.max(0, Math.min(100, (score / MAX_SCORE) * 100));
-  const [overallAvg, setOverallAvg] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!panelName) return;
-    dashboardApi.fetchPanelEfficiency().then((data) => {
-      const match = data.panels.find(
-        (p) => p.panelName?.toLowerCase() === panelName.toLowerCase()
-      );
-      setOverallAvg(match?.averageScore ?? null);
-    }).catch(() => {/* silently ignore */});
-  }, [panelName]);
 
   return (
     <div className="bg-bg-card rounded-xl border border-white/[0.06] p-5 space-y-4">
@@ -74,23 +63,6 @@ export function ScoreCard({ score, category, panelName, subtitle }: Props) {
               {score.toFixed(1)}
               <span className="text-sm font-normal text-text-muted"> / {MAX_SCORE.toFixed(1)}</span>
             </p>
-          </div>
-
-          {/* Overall Panel Efficiency */}
-          <div>
-            <p className="text-xs font-medium uppercase tracking-widest text-text-muted mb-0.5">
-              Overall Panel Efficiency
-            </p>
-            {overallAvg !== null ? (
-              <p className="text-2xl font-bold text-orange-300 leading-none">
-                {overallAvg.toFixed(1)}
-                <span className="text-sm font-normal text-text-muted"> / {MAX_SCORE.toFixed(1)}</span>
-              </p>
-            ) : (
-              <p className="text-sm text-text-muted italic">
-                {panelName ? 'Loading…' : 'N/A'}
-              </p>
-            )}
           </div>
         </div>
       </div>

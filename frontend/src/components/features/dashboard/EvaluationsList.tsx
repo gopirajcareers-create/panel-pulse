@@ -12,6 +12,10 @@ interface EvaluationsListProps {
     pages: number;
   };
   onPageChange?: (skip: number) => void;
+  onSort?: (sortBy: string, order: 'asc' | 'desc', scoreFilter?: string) => void;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  scoreFilter?: string;
 }
 
 function getScoreBadgeClass(score: number): string {
@@ -24,10 +28,24 @@ export function EvaluationsList({
   evaluations = [],
   loading = false,
   pagination,
-  onPageChange
+  onPageChange,
+  onSort,
+  sortBy = 'created_at',
+  sortOrder = 'desc',
+  scoreFilter = 'all'
 }: EvaluationsListProps) {
   const [currentPage, setCurrentPage] = useState(0);
   const navigate = useNavigate();
+
+  const handleScoreAction = (action: string) => {
+    if (!onSort) return;
+    
+    if (action === 'asc' || action === 'desc') {
+      onSort('averageScore', action as 'asc' | 'desc', 'all');
+    } else {
+      onSort('averageScore', 'desc', action);
+    }
+  };
 
   useEffect(() => {
     if (onPageChange) {
@@ -64,7 +82,9 @@ export function EvaluationsList({
               <th className="px-6 py-3 text-left font-bold text-white">Job Interview ID</th>
               <th className="px-6 py-3 text-left font-bold text-white">Panel Name</th>
               <th className="px-6 py-3 text-left font-bold text-white">Candidate Name</th>
-              <th className="px-6 py-3 text-left font-bold text-white">Average Score</th>
+              <th className="px-6 py-3 text-left font-bold text-white min-w-[150px]">
+                Average Score
+              </th>
             </tr>
           </thead>
           <tbody>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Users } from 'lucide-react';
 import { useDashboardStore } from '@/lib/stores/dashboard.store';
 import dashboardApi from '@/lib/api/dashboard.api';
 import { DashboardHeader } from '@/components/features/dashboard/DashboardHeader';
@@ -17,6 +18,14 @@ export default function DashboardPage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [totalPanels, setTotalPanels] = useState(0);
+  const [sortBy, setSortBy] = useState('created_at');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [scoreFilter, setScoreFilter] = useState('all');
+  const [currentFilters, setCurrentFilters] = useState<SearchFilters>({
+    jobInterviewId: '',
+    panelName: '',
+    candidateName: ''
+  });
 
   useEffect(() => {
     const loadData = async () => {
@@ -27,7 +36,7 @@ export default function DashboardPage() {
       }
 
       try {
-        await loadAllEvaluations();
+        await loadAllEvaluations(sortBy, sortOrder, scoreFilter);
       } catch (err) {
         console.error('Failed to load evaluations:', err);
       }
@@ -51,10 +60,12 @@ export default function DashboardPage() {
     }
   };
 
-  const loadAllEvaluations = async () => {
+  const loadAllEvaluations = async (sort: string, order: 'asc' | 'desc', filter: string) => {
     setSearchLoading(true);
     try {
-      const results = await dashboardApi.searchEvaluations();
+      const results = await dashboardApi.searchEvaluations(
+        undefined, undefined, undefined, 50, 0, sort, order, filter
+      );
       setSearchResults(results);
       setHasSearched(false);
     } catch (err) {
@@ -66,11 +77,13 @@ export default function DashboardPage() {
 
   const handleSearch = async (filters: SearchFilters) => {
     setSearchLoading(true);
+    setCurrentFilters(filters);
     try {
       const results = await dashboardApi.searchEvaluations(
         filters.jobInterviewId || undefined,
         filters.panelName || undefined,
-        filters.candidateName || undefined
+        filters.candidateName || undefined,
+        50, 0, sortBy, sortOrder, scoreFilter
       );
       setSearchResults(results);
       setHasSearched(true);
@@ -82,10 +95,39 @@ export default function DashboardPage() {
     }
   };
 
+  const handleSort = async (newSortBy: string, newSortOrder: 'asc' | 'desc', newScoreFilter: string = 'all') => {
+    setSortBy(newSortBy);
+    setSortOrder(newSortOrder);
+    setScoreFilter(newScoreFilter);
+    setSearchLoading(true);
+    try {
+      const results = await dashboardApi.searchEvaluations(
+        currentFilters.jobInterviewId || undefined,
+        currentFilters.panelName || undefined,
+        currentFilters.candidateName || undefined,
+        50, 0, newSortBy, newSortOrder, newScoreFilter
+      );
+      setSearchResults(results);
+    } catch (err) {
+      console.error('Sort error:', err);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
   const handleReset = () => {
     setSearchResults(null);
     setHasSearched(false);
+    setSortBy('created_at');
+    setSortOrder('desc');
+    setScoreFilter('all');
+    setCurrentFilters({
+      jobInterviewId: '',
+      panelName: '',
+      candidateName: ''
+    });
     fetchStats();
+    loadAllEvaluations('created_at', 'desc', 'all');
   };
 
   const displayEvaluations = searchResults ? searchResults.evaluations : [];
@@ -134,18 +176,58 @@ export default function DashboardPage() {
 
           {/* All Evaluations */}
           <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-6 shadow-xl backdrop-blur-sm">
-            <div className="mb-4">
-              <h3 className="text-base font-semibold text-text-primary">
-                {hasSearched ? 'Search Results' : 'All Evaluations'}
-              </h3>
-              <p className="text-text-secondary text-xs mt-0.5">
-                {displayEvaluations.length} evaluation{displayEvaluations.length !== 1 ? 's' : ''} found
-              </p>
+            <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-text-primary tracking-tight">
+                  {hasSearched ? 'Search Results' : 'All Evaluations'}
+                </h3>
+                <p className="text-text-muted text-xs mt-1 font-medium italic">
+                  {displayEvaluations.length} evaluation{displayEvaluations.length !== 1 ? 's' : ''} found
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleReset}
+                  className="px-4 py-2 bg-slate-700/50 hover:bg-slate-600/50 text-text-primary text-xs font-semibold rounded-lg border border-slate-600/50 transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center gap-2"
+                >
+                  <Users className="w-3.5 h-3.5 text-indigo-400" />
+                  View All
+                </button>
+                
+                <div className="h-6 w-px bg-slate-700/50 mx-1" />
+
+                <div className="flex items-center gap-2 bg-slate-900/40 border border-slate-700/50 rounded-lg px-3 py-1.5 shadow-inner">
+                  <span className="text-[11px] font-bold text-text-muted uppercase tracking-wider">Sort/Filter:</span>
+                  <select
+                    value={scoreFilter !== 'all' ? scoreFilter : sortOrder}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === 'asc' || val === 'desc') {
+                        handleSort('averageScore', val as 'asc' | 'desc', 'all');
+                      } else {
+                        handleSort('averageScore', 'desc', val);
+                      }
+                    }}
+                    className="bg-transparent border-none text-xs font-bold text-orange-400 focus:ring-0 cursor-pointer min-w-[100px]"
+                  >
+                    <option value="desc" className="bg-slate-900">Descending</option>
+                    <option value="asc" className="bg-slate-900">Ascending</option>
+                    <option value="good" className="bg-slate-900 text-emerald-400">Good (8.0+)</option>
+                    <option value="moderate" className="bg-slate-900 text-orange-400">Moderate (5-7.9)</option>
+                    <option value="low" className="bg-slate-900 text-red-400">Low (&lt; 5)</option>
+                  </select>
+                </div>
+              </div>
             </div>
             <EvaluationsList
               evaluations={displayEvaluations}
               loading={searchLoading}
               pagination={hasSearched && searchResults ? searchResults.pagination : undefined}
+              onSort={handleSort}
+              sortBy={sortBy}
+              sortOrder={sortOrder}
+              scoreFilter={scoreFilter}
             />
           </div>
 

@@ -24,10 +24,8 @@ function genId(): string {
 const STARTER_QUESTIONS = [
   'Which panel member is most suited for Python-based interviews?',
   'Show me panels with the highest Mandatory Skill Coverage score.',
-  'Which candidates were rejected with weak L2 probing?',
   'Who are the top 5 panels ranked by overall score?',
   'Which panels scored poorly on Technical Depth?',
-  'Show evaluations where the interview structure was strong.',
 ];
 
 // ─── Search mode meta ─────────────────────────────────────────────────────────
@@ -335,10 +333,6 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           )}
         </div>
 
-        {/* Sources (AI only) */}
-        {!isUser && msg.sources && msg.sources.length > 0 && (
-          <SourcesAccordion sources={msg.sources} />
-        )}
 
         {/* Timestamp */}
         <span className="text-[10px] text-slate-600 mt-1 px-1">

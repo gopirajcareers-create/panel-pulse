@@ -10,7 +10,7 @@ export function ProbingDepthBadge({ depth }: Props) {
   const getColourClasses = () => {
     switch (depth) {
       case 'NO PROBING':
-        return `${baseClasses} bg-gray-500/20 text-gray-300`;
+        return `${baseClasses} bg-red-500/20 text-red-300`;
       case 'SURFACE PROBING':
         return `${baseClasses} bg-yellow-500/20 text-yellow-300`;
       case 'DEEP PROBING':
