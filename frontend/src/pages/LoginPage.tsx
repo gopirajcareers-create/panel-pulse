@@ -27,6 +27,7 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [resendCountdown, setResendCountdown] = useState(0);
+  const [testOtp, setTestOtp] = useState('');
 
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -55,7 +56,8 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
-      await apiClient.post('/api/v1/auth/request-otp', { email: trimmed });
+      const res = await apiClient.post<{ otp?: string }>('/api/v1/auth/request-otp', { email: trimmed });
+      if (res.data.otp) setTestOtp(res.data.otp);
       setEmail(trimmed);
       setStep('otp');
       setResendCountdown(RESEND_COOLDOWN);
@@ -143,7 +145,8 @@ export default function LoginPage() {
     setOtp(Array(OTP_LENGTH).fill(''));
     setLoading(true);
     try {
-      await apiClient.post('/api/v1/auth/request-otp', { email });
+      const res = await apiClient.post<{ otp?: string }>('/api/v1/auth/request-otp', { email });
+      if (res.data.otp) setTestOtp(res.data.otp);
       setResendCountdown(RESEND_COOLDOWN);
     } catch (err: any) {
       setError(err?.response?.data?.details || err?.response?.data?.error || 'Failed to resend.');
@@ -235,6 +238,18 @@ export default function LoginPage() {
                   Enter it below.
                 </p>
               </div>
+              
+              {/* Test OTP (Development only) */}
+              {testOtp && (
+                <div className="bg-accent-primary/5 border border-accent-primary/20 rounded-xl p-4 text-center">
+                  <p className="text-[10px] text-text-muted uppercase tracking-[0.2em] font-bold mb-2">
+                    Testing Verification Code
+                  </p>
+                  <div className="text-3xl font-mono font-bold text-accent-primary tracking-[0.3em] bg-bg-surface py-2 rounded-lg border border-border-primary/50">
+                    {testOtp}
+                  </div>
+                </div>
+              )}
 
               {/* OTP boxes */}
               <div className="flex gap-2 justify-center" onPaste={handleOtpPaste}>

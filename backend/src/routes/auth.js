@@ -64,17 +64,28 @@ router.post('/request-otp', async (req, res) => {
     return res.status(500).json({ error: 'Failed to generate code. Please try again.' });
   }
 
+  console.log(`[AUTH] OTP for ${email}: ${code}`);
+  
   try {
     await sendOtpEmail(email, code);
   } catch (err) {
     console.error('[Auth] sendOtpEmail error:', err);
-    return res.status(500).json({
-      error: 'Failed to send email',
-      details: 'Email delivery failed. Check SMTP configuration.',
-    });
+    // In development or if specifically allowed, we don't block the user if email fails
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[Auth] Email failed but allowing login because NODE_ENV is not production.');
+    } else {
+      return res.status(500).json({
+        error: 'Failed to send email',
+        details: 'Email delivery failed. Check SMTP configuration.',
+      });
+    }
   }
 
-  return res.json({ message: 'Code sent. Check your email.' });
+  const responseData = { message: 'Code sent. Check your terminal/email.' };
+  if (process.env.NODE_ENV !== 'production') {
+    responseData.otp = code;
+  }
+  return res.json(responseData);
 });
 
 // ── POST /api/v1/auth/verify-otp ───────────────────────────────────────────
