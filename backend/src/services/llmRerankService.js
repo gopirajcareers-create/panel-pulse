@@ -340,16 +340,16 @@ function _makeOllamaRequest(prompt) {
   return new Promise((resolve, reject) => {
     try {
       const httpLib = OLLAMA_BASE.startsWith('https://') ? require('https') : require('http');
-      const url = new URL(OLLAMA_BASE + '/v1/chat/completions');
+      // Use /api/chat (native, all Ollama versions); /v1/chat/completions requires Ollama >= 0.1.24
+      const url = new URL(OLLAMA_BASE + '/api/chat');
       const payload = JSON.stringify({
         model: OLLAMA_MODEL,
         messages: [
           { role: 'system', content: 'You are a JSON-generating ranking service. Return only valid JSON arrays.' },
           { role: 'user', content: prompt }
         ],
-        temperature: 0.3,
-        max_tokens: 2000,
-        stream: false
+        stream: false,
+        options: { temperature: 0.3, num_predict: 2000 }
       });
 
       const options = {
@@ -371,7 +371,8 @@ function _makeOllamaRequest(prompt) {
           if (res.statusCode && res.statusCode >= 400) return reject(new Error(`Ollama ${res.statusCode}: ${body}`));
           try {
             const response = JSON.parse(body);
-            const content = response.choices?.[0]?.message?.content?.trim();
+            // /api/chat returns { message: { content: '...' } }
+            const content = response.message?.content?.trim();
             if (!content) return reject(new Error('Empty Ollama response'));
             const jsonStr = _extractJsonFromModelResponse(content);
             const rankedResults = JSON.parse(jsonStr);

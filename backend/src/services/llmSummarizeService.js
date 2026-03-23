@@ -400,16 +400,16 @@ function _makeGroqRequest(prompt) {
 function _makeOllamaRequest(prompt) {
   return new Promise((resolve, reject) => {
     const httpLib = OLLAMA_BASE.startsWith('https://') ? require('https') : require('http');
-    const url = new URL(OLLAMA_BASE + '/v1/chat/completions');
+    // Use /api/chat (native, all Ollama versions) instead of /v1/chat/completions
+    const url = new URL(OLLAMA_BASE + '/api/chat');
     const payload = JSON.stringify({
       model: OLLAMA_MODEL,
       messages: [
         { role: 'system', content: 'You are a professional summarizer and content synthesizer. Provide clear, concise, well-structured summaries.' },
         { role: 'user', content: prompt }
       ],
-      temperature: 0.5,
-      max_tokens: 2000,
-      stream: false
+      stream: false,
+      options: { temperature: 0.5, num_predict: 2000 }
     });
 
     const options = {
@@ -431,7 +431,8 @@ function _makeOllamaRequest(prompt) {
         if (res.statusCode >= 400) return reject(new Error(`Ollama ${res.statusCode}: ${body}`));
         try {
           const response = JSON.parse(body);
-          const content = response.choices?.[0]?.message?.content?.trim();
+          // /api/chat returns { message: { content: '...' } }
+          const content = response.message?.content?.trim();
           if (!content) return reject(new Error('Empty Ollama response'));
           resolve(content);
         } catch (err) {

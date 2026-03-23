@@ -70,19 +70,16 @@ async function callGroqChat(messages) {
     }
 
     const model = OLLAMA_BASE ? OLLAMA_MODEL : GROQ_MODEL;
-    const body = JSON.stringify({
-      model,
-      messages,
-      temperature: 0.0,
-      max_tokens: 1536,
-      top_p: 1.0,
-      stream: false
-    });
+    // Build provider-specific body: Ollama uses options:{} for params; GROQ uses top-level fields
+    const body = OLLAMA_BASE
+      ? JSON.stringify({ model, messages, stream: false, options: { temperature: 0.0, num_predict: 1536 } })
+      : JSON.stringify({ model, messages, temperature: 0.0, max_tokens: 1536, top_p: 1.0, stream: false });
 
     let reqOptions;
     let httpLib;
     if (OLLAMA_BASE) {
-      const url = new URL(OLLAMA_BASE + '/v1/chat/completions');
+      // Use /api/chat (native, all Ollama versions) instead of /v1/chat/completions
+      const url = new URL(OLLAMA_BASE + '/api/chat');
       httpLib = url.protocol === 'https:' ? https : require('http');
       reqOptions = {
         hostname: url.hostname,
@@ -118,7 +115,11 @@ async function callGroqChat(messages) {
           if (parsed.error) {
             return reject(new Error(parsed.error.message || 'LLM API error'));
           }
-          const content = parsed.choices?.[0]?.message?.content;
+          // /api/chat (Ollama native) returns { message: { content } }
+          // /openai/v1/chat/completions (GROQ) returns { choices: [{ message: { content } }] }
+          const content = OLLAMA_BASE
+            ? parsed.message?.content
+            : parsed.choices?.[0]?.message?.content;
           if (!content) return reject(new Error('Empty response from LLM'));
           resolve(content);
         } catch (e) {

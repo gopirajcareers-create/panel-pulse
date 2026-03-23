@@ -375,35 +375,32 @@ async function _callGroqWithRetry(userPrompt, systemPrompt) {
   }
 
   // Use Ollama when OLLAMA_BASE_URL is configured, otherwise fall back to GROQ
+  // Ollama native /api/chat works on all versions; /v1/chat/completions requires Ollama >= 0.1.24
   const apiUrl = ollamaBase
-    ? `${ollamaBase}/v1/chat/completions`
+    ? `${ollamaBase}/api/chat`
     : 'https://api.groq.com/openai/v1/chat/completions';
   const model = ollamaBase ? ollamaModel : groqModel;
   const headers = { 'Content-Type': 'application/json' };
   if (!ollamaBase) headers['Authorization'] = `Bearer ${groqApiKey}`;
 
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ];
+
   try {
-    const response = await axios.post(
-      apiUrl,
-      {
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.2,
-        max_tokens: 2000,
-        top_p: 1,
-        stream: false
-      },
-      { headers, timeout: 60000 }
-    );
+    const body = ollamaBase
+      ? { model, messages, stream: false, options: { temperature: 0.2, num_predict: 2000 } }
+      : { model, messages, temperature: 0.2, max_tokens: 2000, top_p: 1, stream: false };
 
-    if (response.data && response.data.choices && response.data.choices[0]) {
-      return response.data.choices[0].message.content;
-    }
+    const response = await axios.post(apiUrl, body, { headers, timeout: 60000 });
 
-    throw new Error('Invalid response format from LLM API');
+    const content = ollamaBase
+      ? response.data?.message?.content
+      : response.data?.choices?.[0]?.message?.content;
+
+    if (!content) throw new Error('Invalid response format from LLM API');
+    return content;
   } catch (error) {
     const provider = ollamaBase ? 'Ollama' : 'GROQ';
     console.error(`[PanelEval] ${provider} request failed:`, error.message);

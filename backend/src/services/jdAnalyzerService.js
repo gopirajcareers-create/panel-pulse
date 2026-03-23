@@ -111,36 +111,33 @@ async function _callGroqWithRetry(userPrompt) {
   }
 
   // Use Ollama when OLLAMA_BASE_URL is configured, otherwise fall back to GROQ
+  // Ollama native /api/chat works on all versions; /v1/chat/completions requires Ollama >= 0.1.24
   const apiUrl = ollamaBase
-    ? `${ollamaBase}/v1/chat/completions`
+    ? `${ollamaBase}/api/chat`
     : 'https://api.groq.com/openai/v1/chat/completions';
   const model = ollamaBase ? ollamaModel : groqModel;
   const headers = { 'Content-Type': 'application/json' };
   if (!ollamaBase) headers['Authorization'] = `Bearer ${groqApiKey}`;
 
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user', content: userPrompt }
+  ];
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const response = await axios.post(
-        apiUrl,
-        {
-          model,
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.7,
-          max_tokens: 1000,
-          top_p: 1,
-          stream: false
-        },
-        { headers, timeout: 60000 }
-      );
+      const body = ollamaBase
+        ? { model, messages, stream: false, options: { temperature: 0.7, num_predict: 1000 } }
+        : { model, messages, temperature: 0.7, max_tokens: 1000, top_p: 1, stream: false };
 
-      if (response.data && response.data.choices && response.data.choices[0]) {
-        return response.data.choices[0].message.content;
-      }
+      const response = await axios.post(apiUrl, body, { headers, timeout: 60000 });
 
-      throw new Error('Invalid response format from LLM API');
+      const content = ollamaBase
+        ? response.data?.message?.content
+        : response.data?.choices?.[0]?.message?.content;
+
+      if (!content) throw new Error('Invalid response format from LLM API');
+      return content;
     } catch (error) {
       const provider = ollamaBase ? 'Ollama' : 'GROQ';
       console.error(`[JDAnalyzer] ${provider} attempt ${attempt}/${maxAttempts} failed:`, error.message);
