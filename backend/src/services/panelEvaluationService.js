@@ -360,61 +360,59 @@ Return a JSON object with:
 }
 
 /**
- * Call GROQ API with retry logic
- * 
+ * Call LLM API with retry logic — prefers local Ollama, falls back to GROQ
+ *
  * @private
  */
 async function _callGroqWithRetry(userPrompt, systemPrompt) {
+  const ollamaBase = (process.env.OLLAMA_BASE_URL || '').replace(/\/$/, '');
+  const ollamaModel = process.env.OLLAMA_MODEL_NAME || process.env.GROQ_MODEL_NAME || 'llama-3.3-70b-versatile';
   const groqApiKey = process.env.GROQ_API_KEY;
   const groqModel = process.env.GROQ_MODEL_NAME || 'llama-3.3-70b-versatile';
 
-  if (!groqApiKey) {
-    throw new Error('GROQ_API_KEY not configured in environment');
+  if (!ollamaBase && !groqApiKey) {
+    throw new Error('No LLM provider configured (set OLLAMA_BASE_URL or GROQ_API_KEY)');
   }
 
-  // Perform a single request to the LLM service (no automatic retries)
+  // Use Ollama when OLLAMA_BASE_URL is configured, otherwise fall back to GROQ
+  const apiUrl = ollamaBase
+    ? `${ollamaBase}/v1/chat/completions`
+    : 'https://api.groq.com/openai/v1/chat/completions';
+  const model = ollamaBase ? ollamaModel : groqModel;
+  const headers = { 'Content-Type': 'application/json' };
+  if (!ollamaBase) headers['Authorization'] = `Bearer ${groqApiKey}`;
+
   try {
     const response = await axios.post(
-      'https://api.groq.com/openai/v1/chat/completions',
+      apiUrl,
       {
-        model: groqModel,
+        model,
         messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: userPrompt
-          }
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
         ],
         temperature: 0.2,
         max_tokens: 2000,
-        top_p: 1
+        top_p: 1,
+        stream: false
       },
-      {
-        headers: {
-          'Authorization': `Bearer ${groqApiKey}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 60000
-      }
+      { headers, timeout: 60000 }
     );
 
     if (response.data && response.data.choices && response.data.choices[0]) {
       return response.data.choices[0].message.content;
     }
 
-    throw new Error('Invalid response format from GROQ API');
+    throw new Error('Invalid response format from LLM API');
   } catch (error) {
-    console.error('GROQ request failed:', error.message);
+    const provider = ollamaBase ? 'Ollama' : 'GROQ';
+    console.error(`[PanelEval] ${provider} request failed:`, error.message);
 
-    // Surface a clear error for rate-limiting without retrying
     if (error.response && error.response.status === 429) {
-      throw new Error('GROQ rate limit (429) — validation temporarily unavailable. Please try again later.');
+      throw new Error(`${provider} rate limit (429) — validation temporarily unavailable. Please try again later.`);
     }
 
-    throw new Error(`GROQ request failed: ${error.message}`);
+    throw new Error(`${provider} request failed: ${error.message}`);
   }
 }
 
