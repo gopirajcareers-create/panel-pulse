@@ -21,6 +21,9 @@ async function connectToMongo() {
   
   // Create vector index on panel_collection for hybrid search
   await createVectorIndex();
+
+  // Ensure users collection indexes
+  await createUsersIndexes();
   
   return db;
 }
@@ -50,6 +53,21 @@ async function createVectorIndex() {
     }
   } catch (err) {
     console.warn('Warning: Index setup issue:', err.message);
+  }
+}
+
+async function createUsersIndexes() {
+  try {
+    const collection = db.collection('users');
+    await collection.createIndex({ email: 1 }, { unique: true });
+    await collection.createIndex({ empId: 1 }, { unique: true });
+    console.log('✓ Users collection indexes ensured');
+  } catch (err) {
+    if (err.message && err.message.includes('already exists')) {
+      console.log('✓ Users indexes already exist');
+    } else {
+      console.warn('Warning: Users index setup issue:', err.message);
+    }
   }
 }
 

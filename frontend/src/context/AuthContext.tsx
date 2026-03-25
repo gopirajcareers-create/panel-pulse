@@ -18,6 +18,10 @@ import { apiClient } from '@/lib/api/client';
 
 export interface AuthUser {
   email: string;
+  firstName?: string;
+  lastName?: string;
+  empId?: string;
+  role?: string;
 }
 
 interface AuthContextValue {

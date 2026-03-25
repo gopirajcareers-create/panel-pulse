@@ -1,9 +1,11 @@
 /**
  * Auth Routes
  *
- * POST /api/v1/auth/request-otp   { email }  → sends 6-digit OTP
- * POST /api/v1/auth/verify-otp    { email, code } → sets JWT cookie
- * GET  /api/v1/auth/me            → returns { email } from cookie
+ * POST /api/v1/auth/register      { firstName, lastName, empId, email, password, confirmPassword, termsAccepted }
+ * POST /api/v1/auth/login         { email, password, termsAccepted }
+ * POST /api/v1/auth/request-otp   { email }  → sends 6-digit OTP (fallback)
+ * POST /api/v1/auth/verify-otp    { email, code } → sets JWT cookie (fallback)
+ * GET  /api/v1/auth/me            → returns user object from cookie
  * POST /api/v1/auth/logout        → clears cookie
  */
 
@@ -11,6 +13,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const { storeOtp, verifyOtp } = require('../services/otpStore');
 const { sendOtpEmail } = require('../services/emailService');
+const { createUser, findUserByEmail, findUserByEmpId, verifyPassword, safeUser } = require('../services/userService');
 
 const router = express.Router();
 
@@ -21,6 +24,29 @@ const SESSION_DURATION = '8h';
 const COOKIE_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 
 const IS_PROD = process.env.NODE_ENV === 'production';
+
+/** Validate password strength: min 8 chars, 1 uppercase, 1 digit, 1 symbol */
+function validatePasswordStrength(password) {
+  if (!password || password.length < 8) return 'Password must be at least 8 characters.';
+  if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter.';
+  if (!/[0-9]/.test(password)) return 'Password must contain at least one number.';
+  if (!/[^A-Za-z0-9]/.test(password)) return 'Password must contain at least one special character.';
+  return null;
+}
+
+/** Issue the standard pp_token cookie */
+function issueSessionCookie(res, payload) {
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: SESSION_DURATION });
+  const secureCookie = process.env.COOKIE_SECURE !== 'false' && IS_PROD;
+  res.cookie('pp_token', token, {
+    httpOnly: true,
+    secure: secureCookie,
+    sameSite: 'lax',
+    maxAge: COOKIE_MAX_AGE_MS,
+    path: '/',
+  });
+  return token;
+}
 
 /** Generate a cryptographically random 6-digit code */
 function generateOtp() {
@@ -38,6 +64,118 @@ function validateEmail(raw) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
   return email;
 }
+
+// ── POST /api/v1/auth/register ─────────────────────────────────────────────
+router.post('/register', async (req, res) => {
+  const {
+    firstName,
+    lastName,
+    empId,
+    email: rawEmail,
+    password,
+    confirmPassword,
+    termsAccepted,
+  } = req.body || {};
+
+  // Validate required fields
+  const missing = ['firstName', 'lastName', 'empId', 'email', 'password', 'confirmPassword'].filter(
+    (f) => !req.body?.[f]?.trim?.()
+  );
+  if (missing.length) {
+    return res.status(400).json({ error: 'Missing required fields.', fields: missing });
+  }
+
+  if (!termsAccepted) {
+    return res.status(400).json({ error: 'You must accept the terms and conditions.' });
+  }
+
+  const email = validateEmail(rawEmail);
+  if (!email) {
+    return res.status(400).json({
+      error: 'Invalid email',
+      details: `Only ${ALLOWED_DOMAIN} addresses are allowed.`,
+    });
+  }
+
+  const passwordError = validatePasswordStrength(password);
+  if (passwordError) {
+    return res.status(400).json({ error: passwordError });
+  }
+
+  if (password !== confirmPassword) {
+    return res.status(400).json({ error: 'Passwords do not match.' });
+  }
+
+  try {
+    // Check uniqueness before insert
+    const [existingEmail, existingEmpId] = await Promise.all([
+      findUserByEmail(email),
+      findUserByEmpId(empId),
+    ]);
+
+    if (existingEmail) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+    if (existingEmpId) {
+      return res.status(409).json({ error: 'An account with this Employee ID already exists.' });
+    }
+
+    await createUser({ firstName, lastName, empId, email, password });
+    return res.status(201).json({ message: 'Account created. Please sign in.' });
+  } catch (err) {
+    // Handle MongoDB duplicate key race condition
+    if (err.code === 11000) {
+      const field = err.keyPattern?.email ? 'email' : 'Employee ID';
+      return res.status(409).json({ error: `An account with this ${field} already exists.` });
+    }
+    console.error('[Auth] register error:', err);
+    return res.status(500).json({ error: 'Registration failed. Please try again.' });
+  }
+});
+
+// ── POST /api/v1/auth/login ────────────────────────────────────────────────
+router.post('/login', async (req, res) => {
+  const { email: rawEmail, password, termsAccepted } = req.body || {};
+
+  if (!rawEmail || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
+  }
+
+  if (!termsAccepted) {
+    return res.status(400).json({ error: 'You must accept the terms and conditions.' });
+  }
+
+  const email = validateEmail(rawEmail);
+  if (!email) {
+    return res.status(400).json({
+      error: 'Invalid email',
+      details: `Only ${ALLOWED_DOMAIN} addresses are allowed.`,
+    });
+  }
+
+  try {
+    const user = await findUserByEmail(email);
+    if (!user || !user.passwordHash) {
+      // No password account — suggest OTP fallback
+      return res.status(401).json({
+        error: 'Invalid email or password.',
+        hint: 'If you have not registered yet, please create an account.',
+      });
+    }
+
+    const passwordOk = await verifyPassword(password, user.passwordHash);
+    if (!passwordOk) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    const payload = safeUser(user);
+    issueSessionCookie(res, payload);
+    return res.json(payload);
+  } catch (err) {
+    console.error('[Auth] login error:', err);
+    return res.status(500).json({ error: 'Sign in failed. Please try again.' });
+  }
+});
 
 // ── POST /api/v1/auth/request-otp ──────────────────────────────────────────
 router.post('/request-otp', async (req, res) => {
@@ -107,28 +245,31 @@ router.post('/verify-otp', async (req, res) => {
   }
 
   // Issue JWT
-  const token = jwt.sign({ email }, JWT_SECRET, { expiresIn: SESSION_DURATION });
+  // If user has a registered account, include richer payload
+  let sessionPayload = { email };
+  try {
+    const userDoc = await findUserByEmail(email);
+    if (userDoc) sessionPayload = safeUser(userDoc);
+  } catch { /* fallback to email-only if lookup fails */ }
 
   // COOKIE_SECURE=false overrides the default so HTTP-only VMs work in production mode
-  const secureCookie = process.env.COOKIE_SECURE !== 'false' && IS_PROD;
-  res.cookie('pp_token', token, {
-    httpOnly: true,
-    secure: secureCookie,
-    sameSite: 'lax',
-    maxAge: COOKIE_MAX_AGE_MS,
-    path: '/',
-  });
+  issueSessionCookie(res, sessionPayload);
 
-  return res.json({ email });
+  return res.json(sessionPayload);
 });
 
 // ── GET /api/v1/auth/me ────────────────────────────────────────────────────
-router.get('/me', (req, res) => {
+router.get('/me', async (req, res) => {
   const token = req.cookies?.pp_token;
   if (!token) return res.status(401).json({ error: 'Not authenticated.' });
 
   try {
     const payload = jwt.verify(token, JWT_SECRET);
+    // Try to return the full user object from DB
+    try {
+      const userDoc = await findUserByEmail(payload.email);
+      if (userDoc) return res.json(safeUser(userDoc));
+    } catch { /* fall through to JWT payload */ }
     return res.json({ email: payload.email });
   } catch {
     res.clearCookie('pp_token', { path: '/' });
