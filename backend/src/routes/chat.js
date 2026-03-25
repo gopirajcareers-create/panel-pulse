@@ -90,7 +90,7 @@ async function callGroqChat(messages) {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
         },
-        timeout: 60000
+        timeout: 180000
       };
     } else {
       httpLib = https;
@@ -103,6 +103,7 @@ async function callGroqChat(messages) {
           'Authorization': `Bearer ${GROQ_API_KEY}`,
           'Content-Length': Buffer.byteLength(body),
         },
+        timeout: 30000
       };
     }
 
@@ -128,6 +129,10 @@ async function callGroqChat(messages) {
       });
     });
 
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('LLM request timed out — model may be loading, please retry'));
+    });
     req.on('error', (e) => reject(new Error(`LLM request failed: ${e.message}`)));
     req.write(body);
     req.end();
@@ -398,10 +403,11 @@ router.post('/', async (req, res) => {
       });
     }
 
-    if (err.message.includes('LLM') || err.message.includes('GROQ')) {
+    if (err.message.includes('LLM') || err.message.includes('GROQ') || err.message.includes('timed out')) {
       return res.status(503).json({
         error: 'AI service temporarily unavailable',
         details: err.message,
+        hint: err.message.includes('timed out') ? 'The model is loading or busy — please wait a moment and retry.' : undefined,
       });
     }
 
