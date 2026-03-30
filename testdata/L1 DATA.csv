@@ -1,0 +1,303 @@
+Job Interview ID,Candidate Name,role,panel_member_id,Panel Name,panel_member_email,JD,L1_decision,L1 Transcript
+JD2001,Arjun,Senior Backend Engineer,P201,Priya,priya.p@panel.ai,"Strong experience in Java 11+ and Spring Boot; Microservices architecture and distributed systems; Experience with Relational Databases and query optimization.",Select,"Priya: Before we dive deep, where are you from originally?
+Arjun: I'm from Chennai.
+Priya: Nice. Let's focus on the technical requirements for this role.
+Priya: How does the JVM handle memory management and GC roots?
+Arjun: It uses markers to see what is alive, but I don't know the exact root types.
+Priya: Can you elaborate on the internal low-level implementation for that specific approach?
+Arjun: I'm not very clear on those internal low-level details right now.
+Priya: Explain the difference between ""volatile"" and ""AtomicInteger"" in a multi-threaded context.
+Arjun: I think they are the same for thread safety. I'm not clear on the internal happens-before relationship.
+Priya: Can you elaborate on the internal low-level implementation for that specific approach?
+Arjun: I'm not very clear on those internal low-level details right now.
+Priya: How would you implement a Circuit Breaker pattern in a Spring Boot microservice?
+Arjun: I have heard of Resilience4j, but I don't know how to configure it for a fallback.
+Priya: Can you elaborate on the internal low-level implementation for that specific approach?
+Arjun: I'm not very clear on those internal low-level details right now.
+Priya: Explain B-Tree vs LSM-Tree for database indexing.
+Arjun: I use standard B-Tree indexing. I don't know much about LSM.
+Priya: Can you elaborate on the internal low-level implementation for that specific approach?
+Arjun: I'm not very clear on those internal low-level details right now.
+Priya: Scenario: A production memory leak is causing OOM every 4 hours.. How do you triage this?
+Arjun: I would check the logs and maybe restart the service. I'm not sure about the internal tools.
+Priya: If restarting doesn't work, what specifically would you look for in a heap dump or flame graph?
+Arjun: I have heard of those tools, but I don't know how to read them.
+Priya: How do you approach mentoring junior engineers on your team?
+Arjun: Oh, I usually just answer their questions if they come to me. I don't have a formal schedule.
+Priya: If a junior engineer consistently checks in buggy code, how would you handle the performance gap?
+Arjun: Uh, I'd probably just fix it myself or tell them to be more careful. I haven't really managed performance formally.
+Priya: Tell me about a time you had a conflict with a stakeholder over a technical deadline.
+Arjun: Once someone wanted a feature fast, and I said it was hard. Eventually we just did it anyway.
+Priya: How did you manage the technical debt from that rush?
+Arjun: I didn't really track it, we just moved to the next task.
+Priya: Final check on your framework knowledge—what's the most critical bottleneck you've solved recently?
+Arjun: I just followed the existing pattern and it worked. I haven't solved bottlenecks.
+Priya: Thank you for your time."
+JD2002,Rahul,Frontend Developer,P202,Kavya,kavya.k@panel.ai,"Expertise in React.js and State Management (Redux/Context API); Proficiency in Tailwind CSS and responsive design; Experience with performance optimization and Web Vitals.",Select,"Kavya: Before we dive deep, where are you from originally?
+Rahul: I'm from Chennai.
+Kavya: Nice. Let's focus on the technical requirements for this role.
+Kavya: How does React Reconciliation work?
+Rahul: It updates the UI when state changes, but I don't know the algorithm name.
+Kavya: Explain Cumulative Layout Shift (CLS).
+Rahul: I have seen it in reports, but I don't know how to fix it.
+Kavya: Difference between Redux Thunk and Saga?
+Rahul: I have only used standard Redux, not middleware.
+Kavya: Thank you for your time."
+JD2003,Karthik,Data Engineer,P203,Anjali,anjali.a@panel.ai,"Building scalable data pipelines using Python and Apache Spark; Experience with Airflow for orchestration; Knowledge of Snowflake or similar cloud data warehouses.",Select,"Anjali: Before we dive deep, where are you from originally?
+Karthik: I'm from Chennai.
+Anjali: Nice. Let's focus on the technical requirements for this role.
+Anjali: What is a Spark broadcast join?
+Karthik: I think it is something related to networking, I haven't used it for optimization.
+Anjali: How do you handle data skew in Spark?
+Karthik: I just wait for the job to complete or restart it with more executors.
+Anjali: Explain Airflow XComs.
+Karthik: I have heard the term but I don't use it in my DAGs.
+Anjali: Thank you for your time."
+JD2004,Vikram,Angular Developer,P204,Sneha,sneha.s@panel.ai,"Advanced Angular (15+) and TypeScript; Deep understanding of RxJS and reactive programming; Experience with modular architecture and Unit Testing.",Select,"Sneha: Before we dive deep, where are you from originally?
+Vikram: I'm from Chennai.
+Sneha: Nice. Let's focus on the technical requirements for this role.
+Sneha: Difference between SwitchMap and MergeMap?
+Vikram: MergeMap handles all concurrently, SwitchMap cancels the previous one. I use them for API calls.
+Sneha: How do you handle memory leaks in Angular?
+Vikram: I use manual unsubscribe, but I don't know about the takeUntil pattern.
+Sneha: Explain Observables vs Promises.
+Vikram: Promises are eager and single-valued; Observables are lazy and emit multiple values. I haven't worked with complex operators.
+Sneha: What is the role of Zone.js in Angular Change Detection?
+Vikram: It's part of the framework, but I don't know how it patches browser APIs.
+Sneha: How do you implement custom directives for performance?
+Vikram: I just use standard directives, I haven 't made custom ones for optimization.
+Sneha: Thank you for your time."
+JD2005,Suresh,Cloud Architect,P205,Divya,divya.d@panel.ai,"AWS Solutions Architecture Professional; Advanced Infrastructure as Code using Terraform; Portfolio in high-availability and serverless computing.",Select,"Divya: Before we dive deep, where are you from originally?
+Suresh: I'm from Chennai.
+Divya: Nice. Let's focus on the technical requirements for this role.
+Divya: How do you handle Terraform state locking?
+Suresh: I use a remote backend like S3, but I'm not sure about the DynamoDB locking internals.
+Divya: Can you elaborate on the internal low-level implementation for that specific approach?
+Suresh: I'm not very clear on those internal low-level details right now.
+Divya: Explain AWS VPC Peering vs Transit Gateway for a 100-VPC setup.
+Suresh: VPC Peering is complex to manage at scale. I'd use Transit Gateway but I don't know the hub-and-spoke details.
+Divya: Can you elaborate on the internal low-level implementation for that specific approach?
+Suresh: I'm not very clear on those internal low-level details right now.
+Divya: Design a system for 5 9s availability across multiple AWS regions.
+Suresh: I would use Route 53 with health checks, but I'm not clear on cross-region data replication latency.
+Divya: Can you elaborate on the internal low-level implementation for that specific approach?
+Suresh: I'm not very clear on those internal low-level details right now.
+Divya: How do you manage Terraform state in a multi-account AWS environment securely?
+Suresh: I use separate state files per account, but I don't know about cross-account IAM roles for state access.
+Divya: Can you elaborate on the internal low-level implementation for that specific approach?
+Suresh: I'm not very clear on those internal low-level details right now.
+Divya: Scenario: A primary AWS region goes down, we need to failover with <10 min RPO.. How do you triage this?
+Suresh: I would check the logs and maybe restart the service. I'm not sure about the internal tools.
+Divya: If restarting doesn't work, what specifically would you look for in a heap dump or flame graph?
+Suresh: I have heard of those tools, but I don't know how to read them.
+Divya: How do you approach mentoring junior engineers on your team?
+Suresh: Oh, I usually just answer their questions if they come to me. I don't have a formal schedule.
+Divya: If a junior engineer consistently checks in buggy code, how would you handle the performance gap?
+Suresh: Uh, I'd probably just fix it myself or tell them to be more careful. I haven't really managed performance formally.
+Divya: Tell me about a time you had a conflict with a stakeholder over a technical deadline.
+Suresh: Once someone wanted a feature fast, and I said it was hard. Eventually we just did it anyway.
+Divya: How did you manage the technical debt from that rush?
+Suresh: I didn't really track it, we just moved to the next task.
+Divya: Final check on your framework knowledge—what's the most critical bottleneck you've solved recently?
+Suresh: I just followed the existing pattern and it worked. I haven't solved bottlenecks.
+Divya: Thank you for your time."
+JD2006,Pradeep,Cloud Support Engineer,P206,Meena,meena.m@panel.ai,"Proficient in AWS Console and CLI troubleshooting; Managing IAM roles and policies; Diagnosing EC2 connectivity and performance issues.",Select,"Meena: Before we dive deep, where are you from originally?
+Pradeep: I'm from Chennai.
+Meena: Nice. Let's focus on the technical requirements for this role.
+Meena: How do you troubleshoot an ""Instance Reachability Check"" failure?
+Pradeep: I would check the console for any errors, but I don't know the specific steps to resolve it.
+Meena: Explain IAM Policy Evaluation logic.
+Pradeep: It checks if the user has permission, but I don't know the order of Deny and Allow.
+Meena: Difference between Security Groups and NACLs?
+Pradeep: Security groups are for instances and NACLs are for subnets. I'm not sure about stateful vs stateless.
+Meena: Thank you for your time."
+JD2007,Naveen,SDET,P207,Lakshmi,lakshmi.l@panel.ai,"Automation testing with Pytest and Selenium/Appium; Integrating tests into CI/CD pipelines; Mobile application and API testing expertise.",Select,"Lakshmi: Before we dive deep, where are you from originally?
+Naveen: I'm from Chennai.
+Lakshmi: Nice. Let's focus on the technical requirements for this role.
+Lakshmi: Actually, I was just reading about the new traffic regulations in city. Have you seen them?
+Naveen: Oh yes, it's quite a mess during peak hours. I usually take the metro.
+Lakshmi: Good idea. Anyway, coming back to the technical discussion...
+Lakshmi: Explain Pytest fixtures with session scope.
+Naveen: I use them for setup and teardown at the session level, but I'm not sure how they behave with parallel execution order.
+Lakshmi: Can you provide a specific example of where you used session scope fixtures in a real project?
+Naveen: I used it once for DB connection, but I don't remember the exact implementation details.
+Lakshmi: Actually, I was just reading about the new traffic regulations in city. Have you seen them?
+Naveen: Oh yes, it's quite a mess during peak hours. I usually take the metro.
+Lakshmi: Good idea. Anyway, coming back to the technical discussion...
+Lakshmi: How do you handle flickering tests?
+Naveen: I usually just rerun them or add a sleep. I know about Explicit Waits but haven't implemented a custom wait factory.
+Lakshmi: Scenario: Your automated test suite takes 4 hours for 100 tests. How do you triage and fix this?
+Naveen: I'd check if tests are blocking each other. I haven't used advanced profiling tools like cProfile for test execution.
+Lakshmi: How do you manage test data for API testing in a CI pipeline?
+Naveen: I use static JSON files. I have not implemented dynamic data generation from live databases.
+Lakshmi: Hands-on: Write a script to capture network logs during a Selenium test.
+Naveen: I haven't done that before, I usually just check the browser logs manually if there is an error.
+Lakshmi: Thank you for your time."
+JD2008,Rohan,Junior UI Engineer,P208,Pooja,pooja.p@panel.ai,"Solid foundation in HTML5, semantic CSS3, and JavaScript ES6; Experience with CSS preprocessors like SASS/LESS; Eye for UI/UX detail.",Select,"Pooja: Before we dive deep, where are you from originally?
+Rohan: I'm from Chennai.
+Pooja: Nice. Let's focus on the technical requirements for this role.
+Pooja: Actually, I was just reading about the new traffic regulations in city. Have you seen them?
+Rohan: Oh yes, it's quite a mess during peak hours. I usually take the metro.
+Pooja: Good idea. Anyway, coming back to the technical discussion...
+Pooja: Explain CSS Specificity hierarchy.
+Rohan: It's just the order of CSS rules in the file. Last one wins.
+Pooja: What is a Closure in JavaScript?
+Rohan: It's a function inside a function, but I don't know why we use it.
+Pooja: Actually, I was just reading about the new traffic regulations in city. Have you seen them?
+Rohan: Oh yes, it's quite a mess during peak hours. I usually take the metro.
+Pooja: Good idea. Anyway, coming back to the technical discussion...
+Pooja: Difference between Flexbox and Grid?
+Rohan: Flexbox is for one dimension and Grid is for two dimensions. I haven't used Grid much.
+Pooja: Thank you for your time."
+JD2009,Aarav,DevOps Engineer,P209,Aditi,aditi.a@panel.ai,"Kubernetes orchestration and containerization; Jenkins/GitLab CI/CD proficiency; Infrastructure as Code with Terraform or CloudFormation.",Select,"Aditi: Before we dive deep, where are you from originally?
+Aarav: I'm from Chennai.
+Aditi: Nice. Let's focus on the technical requirements for this role.
+Aditi: How does a Pod communicate with another Pod across nodes?
+Aarav: I use services and ClusterIP, but I don't know how the overlay network actually works at the VPC level.
+Aditi: Can you elaborate on the internal low-level implementation for that specific approach?
+Aarav: I'm not very clear on those internal low-level details right now.
+Aditi: Explain Taints and Tolerations.
+Aarav: They are used for scheduling pods on specific nodes, but I don't know how they differ from Node Affinity in priority evaluation.
+Aditi: Can you elaborate on the internal low-level implementation for that specific approach?
+Aarav: I'm not very clear on those internal low-level details right now.
+Aditi: Scenario: A Kubernetes cluster is experience random Node NotReady status.. How do you triage this?
+Aarav: I would check the logs and maybe restart the service. I'm not sure about the internal tools.
+Aditi: If restarting doesn't work, what specifically would you look for in a heap dump or flame graph?
+Aarav: I have heard of those tools, but I don't know how to read them.
+Aditi: How do you approach mentoring junior engineers on your team?
+Aarav: Oh, I usually just answer their questions if they come to me. I don't have a formal schedule.
+Aditi: If a junior engineer consistently checks in buggy code, how would you handle the performance gap?
+Aarav: Uh, I'd probably just fix it myself or tell them to be more careful. I haven't really managed performance formally.
+Aditi: Tell me about a time you had a conflict with a stakeholder over a technical deadline.
+Aarav: Once someone wanted a feature fast, and I said it was hard. Eventually we just did it anyway.
+Aditi: How did you manage the technical debt from that rush?
+Aarav: I didn't really track it, we just moved to the next task.
+Aditi: Final check on your framework knowledge—what's the most critical bottleneck you've solved recently?
+Aarav: I just followed the existing pattern and it worked. I haven't solved bottlenecks.
+Aditi: Thank you for your time."
+JD2010,Vivaan,Python Developer,P210,Ananya,ananya.a@panel.ai,"Backend development using Django or Flask; Experience with PostgreSQL and Redis; Strong understanding of asynchronous programming.",Select,"Ananya: Before we dive deep, where are you from originally?
+Vivaan: I'm from Chennai.
+Ananya: Nice. Let's focus on the technical requirements for this role.
+Ananya: What is the Global Interpreter Lock (GIL)?
+Vivaan: It stops multiple threads from running at once, but I don't know how to bypass it for CPU-bound tasks.
+Ananya: Asynchronous vs Synchronous calls in Django?
+Vivaan: I use standard synchronous calls, I haven't worked with Django Channels or async views.
+Ananya: Thank you for your time."
+JD2011,Aditya,Security Engineer,P211,Kavitha,kavitha.k@panel.ai,"Penetration testing and vulnerability assessment; Knowledge of OWASP Top 10; Experience with AWS Security Hub and GuardDuty.",Select,"Kavitha: Before we dive deep, where are you from originally?
+Aditya: I'm from Chennai.
+Kavitha: Nice. Let's focus on the technical requirements for this role.
+Kavitha: How do you prevent SQL Injection correctly?
+Aditya: I use prepared statements, but I don't know how they handle binary data or complex joins safely.
+Kavitha: Can you elaborate on the internal low-level implementation for that specific approach?
+Aditya: I'm not very clear on those internal low-level details right now.
+Kavitha: Explain OAuth2 Authorization Code flow vs Implicit flow.
+Aditya: Authorization Code is for servers, Implicit is for browsers. I'm not clear on the security risk of Implicit flow.
+Kavitha: Can you elaborate on the internal low-level implementation for that specific approach?
+Aditya: I'm not very clear on those internal low-level details right now.
+Kavitha: Scenario: An unauthorized entity is attempting to access private S3 buckets.. How do you triage this?
+Aditya: I would check the logs and maybe restart the service. I'm not sure about the internal tools.
+Kavitha: If restarting doesn't work, what specifically would you look for in a heap dump or flame graph?
+Aditya: I have heard of those tools, but I don't know how to read them.
+Kavitha: How do you approach mentoring junior engineers on your team?
+Aditya: Oh, I usually just answer their questions if they come to me. I don't have a formal schedule.
+Kavitha: If a junior engineer consistently checks in buggy code, how would you handle the performance gap?
+Aditya: Uh, I'd probably just fix it myself or tell them to be more careful. I haven't really managed performance formally.
+Kavitha: Tell me about a time you had a conflict with a stakeholder over a technical deadline.
+Aditya: Once someone wanted a feature fast, and I said it was hard. Eventually we just did it anyway.
+Kavitha: How did you manage the technical debt from that rush?
+Aditya: I didn't really track it, we just moved to the next task.
+Kavitha: Final check on your framework knowledge—what's the most critical bottleneck you've solved recently?
+Aditya: I just followed the existing pattern and it worked. I haven't solved bottlenecks.
+Kavitha: Thank you for your time."
+JD2012,Kiran,Mobile Developer (Flutter),P212,Nisha,nisha.n@panel.ai,"Developing cross-platform apps with Flutter and Dart; State management using Provider or Bloc; Experience with native integrations.",Select,"Nisha: Before we dive deep, where are you from originally?
+Kiran: I'm from Chennai.
+Nisha: Nice. Let's focus on the technical requirements for this role.
+Nisha: How do you optimize Widget build performance?
+Kiran: I use const constructors, but I don't know how to profile rebuilds using the DevTools.
+Nisha: Provider vs Bloc?
+Kiran: I use Provider for small apps and Bloc for large ones. I haven't worked with complex streams.
+Nisha: Thank you for your time."
+JD2013,Rohit,QA Lead,P213,Riya,riya.r@panel.ai,"Leading QA teams and defining test strategies; Automated and manual testing expertise; Experience with JIRA and test management tools.",Select,"Riya: Before we dive deep, where are you from originally?
+Rohit: I'm from Chennai.
+Riya: Nice. Let's focus on the technical requirements for this role.
+Riya: How do you define a test strategy for a microservices architecture?
+Rohit: I focus on end-to-end testing. I haven't implemented contract testing or consumer-driven tests.
+Riya: Can you elaborate on the internal low-level implementation for that specific approach?
+Rohit: I'm not very clear on those internal low-level details right now.
+Riya: How do you manage bug prioritization with stakeholders?
+Rohit: I use a simple priority matrix, but I struggle when everything is marked as high priority.
+Riya: Can you elaborate on the internal low-level implementation for that specific approach?
+Rohit: I'm not very clear on those internal low-level details right now.
+Riya: Scenario: A critical bug reached production despite 100% test coverage.. How do you triage this?
+Rohit: I would check the logs and maybe restart the service. I'm not sure about the internal tools.
+Riya: If restarting doesn't work, what specifically would you look for in a heap dump or flame graph?
+Rohit: I have heard of those tools, but I don't know how to read them.
+Riya: How do you approach mentoring junior engineers on your team?
+Rohit: Oh, I usually just answer their questions if they come to me. I don't have a formal schedule.
+Riya: If a junior engineer consistently checks in buggy code, how would you handle the performance gap?
+Rohit: Uh, I'd probably just fix it myself or tell them to be more careful. I haven't really managed performance formally.
+Riya: Tell me about a time you had a conflict with a stakeholder over a technical deadline.
+Rohit: Once someone wanted a feature fast, and I said it was hard. Eventually we just did it anyway.
+Riya: How did you manage the technical debt from that rush?
+Rohit: I didn't really track it, we just moved to the next task.
+Riya: Final check on your framework knowledge—what's the most critical bottleneck you've solved recently?
+Rohit: I just followed the existing pattern and it worked. I haven't solved bottlenecks.
+Riya: Thank you for your time."
+JD2014,Nikhil,System Administrator,P214,Shruthi,shruthi.s@panel.ai,"Linux server administration (Ubuntu/CentOS); Shell scripting for automation; Managing network services (DNS, DHCP, SMTP).",Select,"Shruthi: Before we dive deep, where are you from originally?
+Nikhil: I'm from Chennai.
+Shruthi: Nice. Let's focus on the technical requirements for this role.
+Shruthi: How do you check for open ports on a remote server?
+Nikhil: I use telnet or netstat, but I don't know the specific flags for advanced cases.
+Shruthi: How do you fix a ""Permission Denied (publickey)"" error in SSH?
+Nikhil: I check the .ssh folder, but I don't know how to set the correct folder permissions.
+Shruthi: Thank you for your time."
+JD2017,Sanjay,Product Manager,P217,Meera,meera.m@panel.ai,"Product Management lifecycle; Agile methodologies; Stakeholder communication and roadmap planning.",Select,"Meera: Before we dive deep, where are you from originally?
+Sanjay: I'm from Chennai.
+Meera: Nice. Let's focus on the technical requirements for this role.
+Meera: How do you prioritize features in a product roadmap?
+Sanjay: I use a mix of stakeholder feedback and user needs.
+Meera: Can you follow up on that—what specific framework like RICE or MoSCoW do you prefer?
+Sanjay: I have heard of RICE, but I usually just use a simple High/Medium/Low priority list.
+Meera: How do you handle a situation where a key feature is delayed?
+Sanjay: I communicate with the stakeholders and try to adjust the timeline.
+Meera: What specifically would you include in that stakeholder communication to manage expectations?
+Sanjay: I would tell them the new date and briefly explain the technical blocker.
+Meera: Thank you for your time."
+JD2018,Deepak,Full Stack Engineer,P218,Revathi,revathi.r@panel.ai,"Full Stack Development with React, Node.js, and MongoDB; Deep understanding of system design and scalability; Experience with CI/CD and cloud deployments.",Select,"Revathi: Before we dive deep, where are you from originally?
+Deepak: I'm from Chennai.
+Revathi: Nice. Let's focus on the technical requirements for this role.
+Revathi: How do you handle state management across a globally distributed React application?
+Deepak: I use a combination of Redux and server-side state sync, but I prefer a centralized event-driven architecture for high consistency.
+Revathi: Can you elaborate on the internal low-level implementation for that specific approach?
+Deepak: I'm not very clear on those internal low-level details right now.
+Revathi: In-depth Follow-up: For that event-driven architecture, how do you manage eventual consistency specifically between the Node.js backend and the distributed database?
+Deepak: I implement an outbox pattern for reliable message delivery and use idempotent consumers to ensure we don't process duplicate events during sync.
+Revathi: Can you elaborate on the internal low-level implementation for that specific approach?
+Deepak: I'm not very clear on those internal low-level details right now.
+Revathi: Deep Probe: What happens if the outbox table itself grows too large? How do you scale the message relay without losing order?
+Deepak: I'd use partitioned outbox tables based on entity ID and implement a sharded polling consumer to maintain ordering within specific partitions.
+Revathi: Can you elaborate on the internal low-level implementation for that specific approach?
+Deepak: I'm not very clear on those internal low-level details right now.
+Revathi: Scenario: Your MongoDB cluster is hitting 90% CPU during write spikes. How do you triage this in real-time?
+Deepak: I check the profiling logs for long-running queries first. If indexing is fine, I check the shard key distribution to see if one shard is being ""hot-spotted"".
+Revathi: Can you elaborate on the internal low-level implementation for that specific approach?
+Deepak: I'm not very clear on those internal low-level details right now.
+Revathi: Follow-up: If hotspotting is confirmed, what's your strategy for re-sharding without significant downtime?
+Deepak: I would analyze the current key distribution and select a more diverse compound shard key, then use the live resharding feature while monitoring catch-up lag closely.
+Revathi: Can you elaborate on the internal low-level implementation for that specific approach?
+Deepak: I'm not very clear on those internal low-level details right now.
+Revathi: Scenario: A primary region failure requires a multi-master DB failover with zero data loss.. How do you triage this?
+Deepak: I would check the logs and maybe restart the service. I'm not sure about the internal tools.
+Revathi: If restarting doesn't work, what specifically would you look for in a heap dump or flame graph?
+Deepak: I have heard of those tools, but I don't know how to read them.
+Revathi: How do you approach mentoring junior engineers on your team?
+Deepak: Oh, I usually just answer their questions if they come to me. I don't have a formal schedule.
+Revathi: If a junior engineer consistently checks in buggy code, how would you handle the performance gap?
+Deepak: Uh, I'd probably just fix it myself or tell them to be more careful. I haven't really managed performance formally.
+Revathi: Tell me about a time you had a conflict with a stakeholder over a technical deadline.
+Deepak: Once someone wanted a feature fast, and I said it was hard. Eventually we just did it anyway.
+Revathi: How did you manage the technical debt from that rush?
+Deepak: I didn't really track it, we just moved to the next task.
+Revathi: Final check on your framework knowledge—what's the most critical bottleneck you've solved recently?
+Deepak: I just followed the existing pattern and it worked. I haven't solved bottlenecks.
+Revathi: Thank you for your time."

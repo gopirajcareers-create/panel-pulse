@@ -1,0 +1,24 @@
+Job Interview ID,Candidate Name,role,panel_member_id,Panel Name,panel_member_email,JD,L1_decision,L1 Transcript
+JD2009,Aarav,DevOps Engineer,P209,Aditi,aditi.a@panel.ai,"Kubernetes orchestration and containerization; Jenkins/GitLab CI/CD proficiency; Infrastructure as Code with Terraform or CloudFormation.",Reject,"Aditi: Hi Aarav, let's discuss your DevOps experience.
+Aarav: Actually, I've been focusing on frontend lately. I use React and Redux for state management.
+Aditi: But this role is for Kubernetes. Do you know about Pod scheduling?
+Aarav: I mostly work with CSS Flexbox and responsive design. For animations, I use Framer Motion.
+Aditi: How do you handle CI/CD?
+Aarav: I use Vercel for deploying my React apps. It's very easy for frontend developers.
+Aditi: Thank you."
+JD2010,Vivaan,Python Developer,P210,Ananya,ananya.a@panel.ai,"Backend development using Django or Flask; Experience with PostgreSQL and Redis; Strong understanding of asynchronous programming.",Select,"Ananya: Hi Vivaan, tell me about your experience with Python's async features.
+Vivaan: I've used asyncio extensively in my last project with FastAPI. For Django, I've implemented async views to handle high-concurrency I/O tasks.
+Ananya: How do you optimize database queries in PostgreSQL?
+Vivaan: I use select_related and prefetch_related in Django ORM to avoid N+1 problems. I also use Redis as a caching layer for expensive query results.
+Ananya: That sounds solid. How do you handle complex background tasks?
+Vivaan: I use Celery with Redis as the broker. It helps in offloading long-running tasks from the request-response cycle.
+Ananya: Great, thank you."
+JD2011,Arjun,Senior Frontend Engineer,P211,Sneha,sneha.s@panel.ai,"Strong experience in React.js performance optimization; Expert knowledge of Redux middleware (Saga/Thunk); Proven track record of scaling frontend applications.",Select,"Sneha: Hi Arjun, let's talk about your experience with React performance optimization.
+Arjun: I have very good hands-on experience in this area. I improved performance significantly in my last project.
+Sneha: That's a bold claim. Can you walk me through the specific metrics and techniques?
+Arjun: Of course. I have good knowledge on React's profiling tools. I used the React Profiler to identify that our main dashboard was re-rendering 12 times on a single input change. I implemented a debounced state update and used React.memo for the heavy chart components, which reduced the re-render count to 2 and slashed the interaction latency by 450ms.
+Sneha: What about Redux? How do you handle complex side effects?
+Arjun: I have good hands-on experience with Redux Saga. In our payment module, I implemented a watcher saga to handle concurrent transaction requests, using the takeLatest effect to prevent race conditions and ensuring eventual consistency with the backend.
+Sneha: Have you scaled apps for high traffic?
+Arjun: I have good knowledge on scaling. I've worked on a global e-commerce platform where we scaled to 50k concurrent users. I implemented Brotli compression and used a CDN for asset delivery, along with code-splitting at the route level to keep the initial bundle size under 200KB.
+Sneha: Thank you."
