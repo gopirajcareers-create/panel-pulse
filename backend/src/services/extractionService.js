@@ -53,37 +53,12 @@ async function extractTextFromBuffer(buffer, mimetype) {
  * Reuses the logic from panelEvaluationService.js
  */
 async function callLLM(userPrompt, systemPrompt) {
-  const ollamaBase = (process.env.OLLAMA_BASE_URL || '').replace(/\/$/, '');
-  const ollamaModel = process.env.OLLAMA_MODEL_NAME || process.env.GROQ_MODEL_NAME || 'llama-3.3-70b-versatile';
-  const groqApiKey = process.env.GROQ_API_KEY;
-  const groqModel = process.env.GROQ_MODEL_NAME || 'llama-3.3-70b-versatile';
-
-  const apiUrl = ollamaBase
-    ? `${ollamaBase}/api/chat`
-    : 'https://api.groq.com/openai/v1/chat/completions';
-  const model = ollamaBase ? ollamaModel : groqModel;
-  const headers = { 'Content-Type': 'application/json' };
-  if (!ollamaBase) headers['Authorization'] = `Bearer ${groqApiKey}`;
-
+  const llmClient = require('./llmClient');
   const messages = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt }
   ];
-
-  const body = ollamaBase
-    ? { model, messages, stream: false, options: { temperature: 0.1, num_predict: 2000 } }
-    : { model, messages, temperature: 0.1, max_tokens: 2000, stream: false };
-
-  const response = await axios.post(apiUrl, body, { 
-    headers, 
-    timeout: ollamaBase ? 180000 : 30000 
-  });
-
-  const rawContent = ollamaBase
-    ? (response.data?.message?.content || '')
-    : response.data?.choices?.[0]?.message?.content;
-
-  return (rawContent || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  return llmClient.callLLM(messages, { temperature: 0.1, maxTokens: 2000 });
 }
 
 /**

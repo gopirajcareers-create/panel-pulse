@@ -93,65 +93,28 @@ Provide the skill classifications as per the specified format.`;
 }
 
 /**
- * Call LLM API with retry logic (Ollama preferred, GROQ fallback)
+ * Call LLM API with retry logic — uses shared llmClient (Ollama → GROQ → Mistral)
  *
  * @private
  * @param {string} userPrompt - The prompt to send to the LLM
  * @returns {Promise<string>} LLM response text
  */
 async function _callGroqWithRetry(userPrompt) {
+  const { callLLM } = require('./llmClient');
   const maxAttempts = 3;
-  const ollamaBase = (process.env.OLLAMA_BASE_URL || '').replace(/\/$/, '');
-  const ollamaModel = process.env.OLLAMA_MODEL_NAME || process.env.GROQ_MODEL_NAME || 'llama-3.3-70b-versatile';
-  const groqApiKey = process.env.GROQ_API_KEY;
-  const groqModel = process.env.GROQ_MODEL_NAME || 'llama-3.3-70b-versatile';
-
-  if (!ollamaBase && !groqApiKey) {
-    throw new Error('No LLM provider configured (set GROQ_API_KEY or OLLAMA_BASE_URL)');
-  }
-
-  // Use Ollama when OLLAMA_BASE_URL is configured, otherwise fall back to GROQ
-  // Ollama native /api/chat works on all versions; /v1/chat/completions requires Ollama >= 0.1.24
-  const apiUrl = ollamaBase
-    ? `${ollamaBase}/api/chat`
-    : 'https://api.groq.com/openai/v1/chat/completions';
-  const model = ollamaBase ? ollamaModel : groqModel;
-  const headers = { 'Content-Type': 'application/json' };
-  if (!ollamaBase) headers['Authorization'] = `Bearer ${groqApiKey}`;
-
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: userPrompt }
   ];
-
+  let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const body = ollamaBase
-        ? { model, messages, stream: false, options: { temperature: 0.7, num_predict: 1000 } }
-        : { model, messages, temperature: 0.7, max_tokens: 1000, top_p: 1, stream: false };
-
-      const response = await axios.post(apiUrl, body, { headers, timeout: ollamaBase ? 180000 : 30000 });
-
-      const rawContent = ollamaBase
-        ? (response.data?.message?.content || response.data?.message?.thinking || '')
-        : response.data?.choices?.[0]?.message?.content;
-
-      // Strip chain-of-thought <think> blocks emitted by deepseek-r1 style models
-      const content = (rawContent || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-      if (!content) throw new Error('Invalid response format from LLM API');
-      return content;
+      return await callLLM(messages, { temperature: 0.7, maxTokens: 1000 });
     } catch (error) {
-      const provider = ollamaBase ? 'Ollama' : 'GROQ';
-      console.error(`[JDAnalyzer] ${provider} attempt ${attempt}/${maxAttempts} failed:`, error.message);
-
-      if (attempt === maxAttempts) {
-        throw new Error(`Failed after ${maxAttempts} attempts: ${error.message}`);
-      }
-
-      // Exponential backoff: 1s, 2s
-      const delay = Math.pow(2, attempt - 1) * 1000;
-      await new Promise(resolve => setTimeout(resolve, delay));
+      lastError = error;
+      console.error(`[JDAnalyzer] LLM attempt ${attempt}/${maxAttempts} failed:`, error.message);
+      if (attempt === maxAttempts) throw new Error(`Failed after ${maxAttempts} attempts: ${error.message}`);
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt - 1) * 1000));
     }
   }
 }

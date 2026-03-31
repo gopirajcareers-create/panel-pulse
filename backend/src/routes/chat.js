@@ -61,82 +61,11 @@ INTERPRETATION RANGE:
 - 8.0–10.0: GOOD (Exceptional evaluation quality and alignment)`;
 
 /**
- * Call LLM for chat completion — uses Ollama (local) when OLLAMA_BASE_URL is set, otherwise GROQ
+ * Call LLM for chat completion — uses shared llmClient (Ollama → GROQ → Mistral)
  */
 async function callGroqChat(messages) {
-  return new Promise((resolve, reject) => {
-    if (!OLLAMA_BASE && !GROQ_API_KEY) {
-      return reject(new Error('No LLM provider configured (set GROQ_API_KEY or OLLAMA_BASE_URL)'));
-    }
-
-    const model = OLLAMA_BASE ? OLLAMA_MODEL : GROQ_MODEL;
-    // Build provider-specific body: Ollama uses options:{} for params; GROQ uses top-level fields
-    const body = OLLAMA_BASE
-      ? JSON.stringify({ model, messages, stream: false, options: { temperature: 0.0, num_predict: 1536 } })
-      : JSON.stringify({ model, messages, temperature: 0.0, max_tokens: 1536, top_p: 1.0, stream: false });
-
-    let reqOptions;
-    let httpLib;
-    if (OLLAMA_BASE) {
-      // Use /api/chat (native, all Ollama versions) instead of /v1/chat/completions
-      const url = new URL(OLLAMA_BASE + '/api/chat');
-      httpLib = url.protocol === 'https:' ? https : require('http');
-      reqOptions = {
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-        },
-        timeout: 180000
-      };
-    } else {
-      httpLib = https;
-      reqOptions = {
-        hostname: 'api.groq.com',
-        path: '/openai/v1/chat/completions',
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
-          'Content-Length': Buffer.byteLength(body),
-        },
-        timeout: 30000
-      };
-    }
-
-    const req = httpLib.request(reqOptions, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          if (parsed.error) {
-            return reject(new Error(parsed.error.message || 'LLM API error'));
-          }
-          // /api/chat (Ollama native) returns { message: { content } }
-          // /openai/v1/chat/completions (GROQ) returns { choices: [{ message: { content } }] }
-          const content = OLLAMA_BASE
-            ? parsed.message?.content
-            : parsed.choices?.[0]?.message?.content;
-          if (!content) return reject(new Error('Empty response from LLM'));
-          resolve(content);
-        } catch (e) {
-          reject(new Error('Failed to parse LLM response'));
-        }
-      });
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('LLM request timed out — model may be loading, please retry'));
-    });
-    req.on('error', (e) => reject(new Error(`LLM request failed: ${e.message}`)));
-    req.write(body);
-    req.end();
-  });
+  const { callLLM } = require('../services/llmClient');
+  return callLLM(messages, { temperature: 0.0, maxTokens: 1536 });
 }
 
 /**

@@ -352,63 +352,28 @@ Return a JSON object with:
 }
 
 /**
- * Call LLM API with retry logic — prefers local Ollama, falls back to GROQ
+ * Call LLM API — uses shared llmClient (Ollama → GROQ → Mistral)
  *
  * @private
  */
 async function _callGroqWithRetry(userPrompt, systemPrompt) {
-  const ollamaBase = (process.env.OLLAMA_BASE_URL || '').replace(/\/$/, '');
-  const ollamaModel = process.env.OLLAMA_MODEL_NAME || process.env.GROQ_MODEL_NAME || 'llama-3.3-70b-versatile';
-  const groqApiKey = process.env.GROQ_API_KEY;
-  const groqModel = process.env.GROQ_MODEL_NAME || 'llama-3.3-70b-versatile';
-
-  if (!ollamaBase && !groqApiKey) {
-    throw new Error('No LLM provider configured (set OLLAMA_BASE_URL or GROQ_API_KEY)');
-  }
-
-  // Use Ollama when OLLAMA_BASE_URL is configured, otherwise fall back to GROQ
-  // Ollama native /api/chat works on all versions; /v1/chat/completions requires Ollama >= 0.1.24
-  const apiUrl = ollamaBase
-    ? `${ollamaBase}/api/chat`
-    : 'https://api.groq.com/openai/v1/chat/completions';
-  const model = ollamaBase ? ollamaModel : groqModel;
-  const headers = { 'Content-Type': 'application/json' };
-  if (!ollamaBase) headers['Authorization'] = `Bearer ${groqApiKey}`;
-
+  const { callLLM, getProvider } = require('./llmClient');
   const messages = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt }
   ];
-
   try {
-    const body = ollamaBase
-      ? { model, messages, stream: false, options: { temperature: 0.2, num_predict: 2000 } }
-      : { model, messages, temperature: 0.2, max_tokens: 2000, top_p: 1, stream: false };
-
-    const response = await axios.post(apiUrl, body, { headers, timeout: ollamaBase ? 180000 : 30000 });
-
-    const rawContent = ollamaBase
-      ? (response.data?.message?.content || response.data?.message?.thinking || '')
-      : response.data?.choices?.[0]?.message?.content;
-
-    // Strip chain-of-thought <think> blocks emitted by deepseek-r1 style models
-    const content = (rawContent || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-
-    if (!content) throw new Error('Invalid response format from LLM API');
-    return content;
+    return await callLLM(messages, { temperature: 0.2, maxTokens: 2000 });
   } catch (error) {
-    const provider = ollamaBase ? 'Ollama' : 'GROQ';
-    // Log the full response body when available to help diagnose model-not-found 404s
+    const provider = getProvider() || 'LLM';
     const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
     console.error(`[PanelEval] ${provider} request failed:`, detail);
-
-    if (error.response && error.response.status === 429) {
+    if (error.response?.status === 429) {
       throw new Error(`${provider} rate limit (429) — validation temporarily unavailable. Please try again later.`);
     }
-    if (error.response && error.response.status === 404) {
-      throw new Error(`${provider} 404 — model not found or endpoint unavailable. Check OLLAMA_MODEL_NAME (run GET /api/v1/health/llm to see available models). Detail: ${detail}`);
+    if (error.response?.status === 404) {
+      throw new Error(`${provider} 404 — model not found or endpoint unavailable. Detail: ${detail}`);
     }
-
     throw new Error(`${provider} request failed: ${detail}`);
   }
 }

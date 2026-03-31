@@ -8,8 +8,8 @@ const OLLAMA_MODEL = process.env.OLLAMA_MODEL_NAME || GROQ_MODEL;
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // ms
 
-if (!GROQ_API_KEY && !OLLAMA_BASE) {
-  console.warn('⚠️  No LLM provider configured: set GROQ_API_KEY or OLLAMA_BASE_URL');
+if (!GROQ_API_KEY && !OLLAMA_BASE && !process.env.MISTRAL_API_KEY) {
+  console.warn('⚠️  No LLM provider configured: set OLLAMA_BASE_URL, GROQ_API_KEY, or MISTRAL_API_KEY');
 } else if (OLLAMA_BASE) {
   console.log(`🤖 LLM provider: Ollama (${OLLAMA_BASE}) model=${OLLAMA_MODEL}`);
 }
@@ -184,26 +184,31 @@ JSON Array (no other text):`;
  * Call GROQ API with retry logic
  */
 async function _callGroqAPI(prompt, focus) {
-  // Provider switch: prefer Ollama when OLLAMA_BASE is configured
-  if (OLLAMA_BASE) {
-    return await _callOllamaAPI(prompt);
-  }
-
+  const { callLLM } = require('./llmClient');
+  const messages = [
+    { role: 'system', content: 'You are a JSON-generating ranking service. Return only valid JSON arrays.' },
+    { role: 'user', content: prompt }
+  ];
   let lastError;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await _makeGroqRequest(prompt);
+      const content = await callLLM(messages, { temperature: 0.3, maxTokens: 2000 });
+      const extracted = _extractJsonFromModelResponse(content);
+      if (!extracted) throw new Error(`Could not extract JSON from LLM response: ${content.substring(0, 200)}`);
+      const validated = JSON.parse(extracted).map((item, index) => ({
+        id: item.id || item.result_id || String(index + 1),
+        score: Math.min(10, Math.max(1, item.score || item.rank || (10 - index))),
+        reason: item.reason || item.explanation || '',
+        explanation: item.explanation || item.reason || ''
+      }));
+      return validated;
     } catch (err) {
       lastError = err;
-      console.warn(`[LLMRerank] GROQ attempt ${attempt}/${MAX_RETRIES} failed:`, err.message);
-
-      if (attempt < MAX_RETRIES) {
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * attempt));
-      }
+      console.warn(`[LLMRerank] attempt ${attempt}/${MAX_RETRIES} failed:`, err.message);
+      if (attempt < MAX_RETRIES) await new Promise((r) => setTimeout(r, RETRY_DELAY * attempt));
     }
   }
-
-  throw new Error(`GROQ API failed after ${MAX_RETRIES} attempts: ${lastError.message}`);
+  throw new Error(`LLM re-ranking failed after ${MAX_RETRIES} attempts: ${lastError.message}`);
 }
 
 
