@@ -110,8 +110,6 @@ export function ExtractDetailsForm() {
       let headers = result.type === 'l1' ? l1Headers : result.type === 'l2' ? l2Headers : jdHeaders;
       Object.keys(data).forEach(key => { if (!headers.includes(key)) headers.push(key); });
 
-      const EXCEL_CELL_LIMIT = 32767;
-
       const formatValue = (val: any, header?: string) => {
         if (val === null || val === undefined) return '""';
         let str = String(val);
@@ -120,14 +118,9 @@ export function ExtractDetailsForm() {
 
         const isLongField = header === 'L1 Transcript' || header === 'L2 Rejected Reason' || header === 'JD';
         if (isLongField) {
-          // Replace all newlines with a single space to keep everything in ONE row
+          // Flatten newlines to spaces for CSV (backend already handles compression)
           str = str.replace(/\n+/g, ' ');
-          // Collapse multiple spaces
           str = str.replace(/  +/g, ' ').trim();
-          // NOTE: Excel can only display 32,767 chars per cell. The CSV FILE has all
-          // the data — the evaluation pipeline reads the full text correctly.
-          // If you need to view the complete transcript, open the CSV in Google Sheets
-          // or a text editor instead of Excel.
         }
         return `"${str.replace(/"/g, '""')}"`;
       };
