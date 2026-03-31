@@ -81,7 +81,7 @@ export function JdSkillsCard({ refinedJd }: Props) {
     (refinedJd.mandatory_skills?.length ?? 0) > 0 ||
     (refinedJd.good_to_have_skills?.length ?? 0) > 0;
 
-  if (!hasAny) return null;
+  if (!hasAny && !refinedJd.raw) return null;
 
   return (
     <div className="bg-bg-card rounded-xl border border-white/[0.06] p-5 space-y-4">
@@ -123,13 +123,8 @@ export function JdSkillsCard({ refinedJd }: Props) {
             />
           </>
         ) : refinedJd.raw ? (
-          <div className="p-4 bg-white/[0.02] border border-white/10 rounded-lg">
-            <p className="text-xs text-text-muted mb-2 uppercase tracking-widest font-semibold italic">
-              Unstructured analysis:
-            </p>
-            <div className="text-sm text-text-primary whitespace-pre-wrap leading-relaxed">
-              {refinedJd.raw}
-            </div>
+          <div className="text-sm text-text-muted italic p-4 text-center border-2 border-dashed border-white/5 rounded-lg">
+            Skills could not be categorized for this JD. Please re-evaluate to refresh.
           </div>
         ) : (
           <div className="text-sm text-text-muted italic p-4 text-center border-2 border-dashed border-white/5 rounded-lg">

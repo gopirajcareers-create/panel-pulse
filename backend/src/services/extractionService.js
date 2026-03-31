@@ -79,7 +79,7 @@ ${text}`;
 /**
  * Extract L1 Transcript data
  */
-async function extractL1(text, jobId, panelName = '', candidateName = '', panelMemberId = '', panelMemberEmail = '') {
+async function extractL1(text, jobId, panelName = '', candidateName = '', panelMemberId = '', panelMemberEmail = '', jdText = '') {
   const systemPrompt = "You are an interview transcript parser. Return ONLY valid JSON. Ensure all strings are JSON-safe (no raw newlines inside values; use \\n instead).";
   const context = `
 PANEL NAME TO LOOK FOR: ${panelName || 'any'}
@@ -115,6 +115,7 @@ ${text.substring(0, 30000)}`;
   return {
     "Job Interview ID": jobId,
     ...metadata,
+    "JD": jdText || metadata["JD"] || '',
     "L1 Transcript": text // Append full text here instead of asking LLM to re-emit it
   };
 }
@@ -122,7 +123,7 @@ ${text.substring(0, 30000)}`;
 /**
  * Extract L2 Rejection data
  */
-async function extractL2(text, jobId, panelName = '', candidateName = '', panelMemberId = '', panelMemberEmail = '') {
+async function extractL2(text, jobId, panelName = '', candidateName = '', panelMemberId = '', panelMemberEmail = '', jdText = '') {
   const systemPrompt = "You are an L2 rejection reason parser. Return ONLY valid JSON. Ensure all strings are JSON-safe (no raw newlines inside values; use \\n instead).";
   const userPrompt = `From the document below, extract the rejection details ONLY for the candidate: "${candidateName || 'the relevant candidate'}".
 Note: The source document likely has a column named "L2 Feedback" — extract its content into the "L2 Rejected Reason" field.
@@ -152,7 +153,8 @@ ${text.substring(0, 8000)}`;
   const metadata = parseJSONSafely(response);
   return {
     "Job Interview ID": jobId,
-    ...metadata
+    ...metadata,
+    "JD": jdText || metadata["JD"] || ''
   };
 }
 

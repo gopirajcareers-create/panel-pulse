@@ -27,28 +27,25 @@ const PANEL_SCORING_SYSTEM_PROMPT = `You are an expert panel evaluator assessing
 Your task is to score candidates across multiple dimensions using the provided transcripts and job description.
 Return ONLY valid JSON matching the exact schema provided. No additional text.`;
 
-const JD_REFINE_SYSTEM_PROMPT = `You are a Senior Recruitment Manager.
-Extract ONLY the specific names of technical skills from the JD.
+const JD_REFINE_SYSTEM_PROMPT = `/no_think
+You are a Senior Recruitment Manager.
+Extract ONLY the specific technical skill keywords from the JD.
 
-Format:
-Key Skills:
-- Skill Name 1
-- Skill Name 2
-
-Mandatory Skills:
-- Skill Name 1
-
-Good To Have Skills:
-- Skill Name 1
+Return ONLY a valid JSON object — no thinking, no explanation, no preamble:
+{
+  "key_skills": ["Skill1", "Skill2"],
+  "mandatory_skills": ["Skill1", "Skill2"],
+  "good_to_have_skills": ["Skill1", "Skill2"]
+}
 
 RULES:
-1. ONLY output these three specific categories: Key Skills, Mandatory Skills, and Good To Have Skills.
-2. DO NOT repeat the same skill in more than one category.
-3. ONLY output the names of the skills (e.g. "Java", "React", "SQL").
-4. ALWAYS use a markdown bulleted list (starting with - ) for skills. One skill per line.
-5. NO explanations, NO justifications, NO commas between skills on the same line.
-6. NO conversational filler. NO thinking process.
-7. Return ONLY the bulleted list. No intro or outro text.`;
+1. Output ONLY the JSON object above. Nothing else.
+2. Each skill must be a short keyword (e.g. "Java", "Selenium", "CI/CD", "REST APIs").
+3. DO NOT repeat a skill across categories.
+4. DO NOT explain or justify. DO NOT output any reasoning.
+5. If the JD explicitly labels skills as "mandatory" or "required", put them in mandatory_skills.
+6. If the JD labels skills as "nice to have" or "preferred" or "plus", put them in good_to_have_skills.
+7. All other core skills go in key_skills.`;
 
 
 const PANEL_SUMMARY_SYSTEM_PROMPT = `You are a Senior HR Manager reviewing a panel interview evaluation report.
@@ -589,84 +586,122 @@ function _validatePanelStructure(obj) {
  * @private
  */
 async function _generateRefinedJD(jd) {
+  let rawContent = '';
   try {
-    const userPrompt = `Analyse this Job Description and list ONLY the core skill names into Key, Mandatory, and Good To Have lists:\n\nJob Description:\n${jd}`;
-    const rawContent = await _callGroqWithRetry(userPrompt, JD_REFINE_SYSTEM_PROMPT);
+    const userPrompt = `/no_think
+Extract skill keywords from this JD into JSON with keys: key_skills, mandatory_skills, good_to_have_skills.
+Output ONLY the JSON object, nothing else.
+
+Job Description:
+${jd}`;
+    rawContent = await _callGroqWithRetry(userPrompt, JD_REFINE_SYSTEM_PROMPT);
     
-    // Extra safety: strip any reasoning that leaked outside think blocks
-    let clean = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-    // Strip common AI filler if it leaked
-    clean = clean.split('\n').filter(line => {
-      const l = line.toLowerCase();
-      return !l.includes('wait,') && !l.includes('the user said') && !l.includes('inference') && !l.includes('thinking about');
-    }).join('\n');
-
-    const parsed = { key_skills: [], mandatory_skills: [], good_to_have_skills: [], raw: clean };
+    // Aggressively strip thinking/reasoning blocks and preamble
+    let clean = rawContent
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .replace(/<\/think>/gi, '')
+      .trim();
     
-    // Flexible regexes to handle markdown stars, hashtags, and casing
-    const keyMatch = clean.match(/(?:[#*]*\s*)?Key\s+Skills\s*[:*]*\s*([\s\S]*?)(?=(?:[#*]*\s*)?(?:Mandatory|Good\s+To\s+Have|Good\s+To\s+Have\s+Skills)\s+Skills|Good\s+To\s+Have|$)/i);
-    const mandatoryMatch = clean.match(/(?:[#*]*\s*)?Mandatory\s+Skills\s*[:*]*\s*([\s\S]*?)(?=(?:[#*]*\s*)?(?:Key|Good\s+To\s+Have|Good\s+To\s+Have\s+Skills)\s+Skills|Good\s+To\s+Have|$)/i);
-    const goodMatch = clean.match(/(?:[#*]*\s*)?(?:Good\s+To\s+Have\s+Skills|Good\s+To\s+Have)\s*[:*]*\s*([\s\S]*?)(?=(?:[#*]*\s*)?(?:Key|Mandatory)\s+Skills|$)/i);
-
-    // Noise words that appear in AI reasoning but never in real skill names
-    const NOISE_PHRASES = [
-      'wait,', 'hmm,', 'i need', 'the user', 'so that', 'maybe', 'perhaps',
-      'actually', 'however', 'but the', 'deep understanding', 'experience with',
-      'the mention', 'this is', 'might struggle', 'another key', 'for the role',
-      'the candidate', 'the jd', 'the role', 'the panel', 'specific database',
-      'it is', 'it\'s', 'which', 'that is', 'let me', 'need to check',
-      'the rules', 'the example', 'inference', 'thinking about', 'i\'m', 'i think'
-    ];
-
-    const seenSkills = new Set();
-    function extractLines(block) {
-      if (!block) return [];
-      
-      // Split by newline first
-      let lines = block.trim().split('\n');
-      
-      // If we only have one line but it has commas/semicolons, it might be a single-line list
-      if (lines.length === 1 && (lines[0].includes(',') || lines[0].includes(';'))) {
-        lines = lines[0].split(/[,;]/);
-      }
-
-      return lines
-        .map(l => l.replace(/^[*•\-]\s*/, '').replace(/^\d+\.\s*/, '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim())
-        .filter(l => {
-          const lower = l.toLowerCase();
-          if (lower.length <= 1) return false;
-          
-          // De-duplication check
-          if (seenSkills.has(lower)) return false;
-          
-          // Technical skill names are usually 1-4 words. Anything > 8 words is likely noise.
-          const wordCount = l.split(/\s+/).length;
-          if (wordCount > 8) return false;
-          
-          // Reject lines that contain AI-reasoning noise phrases
-          if (NOISE_PHRASES.some(p => lower.includes(p))) return false;
-          
-          // Specific case for things like ", and" or "and "
-          if (lower === 'and' || lower === '&') return false;
-
-          seenSkills.add(lower);
-          return true;
-        })
-        .map(l => {
-          // Strip trailing punctuation and filler words like "and"
-          return l.replace(/[.,;:]+$/, '').replace(/^and\s+/i, '').replace(/\s+and$/i, '').trim();
-        })
-        .filter(l => l.length > 1);
+    // --- Attempt 1: JSON parsing ---
+    let parsedJson = null;
+    const jsonBlock = clean.match(/```json\s*([\s\S]*?)```/i);
+    if (jsonBlock) {
+      try {
+        parsedJson = JSON.parse(jsonBlock[1].trim());
+      } catch (_) { /* fall through */ }
     }
-
-    parsed.key_skills = extractLines(keyMatch?.[1]);
-    parsed.mandatory_skills = extractLines(mandatoryMatch?.[1]);
-    parsed.good_to_have_skills = extractLines(goodMatch?.[1]);
-    return parsed;
+    
+    if (!parsedJson) {
+      const firstBrace = clean.indexOf('{');
+      const lastBrace = clean.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        try {
+          parsedJson = JSON.parse(clean.substring(firstBrace, lastBrace + 1));
+        } catch (_) { /* fall through */ }
+      }
+    }
+    
+    if (parsedJson && (parsedJson.key_skills || parsedJson.mandatory_skills || parsedJson.good_to_have_skills)) {
+      const cleanArray = (arr) => {
+        if (!Array.isArray(arr)) return [];
+        return arr
+          .map(s => typeof s === 'string' ? s.trim() : '')
+          .filter(s => s.length > 1 && s.split(/\s+/).length <= 10);
+      };
+      return {
+        key_skills: cleanArray(parsedJson.key_skills),
+        mandatory_skills: cleanArray(parsedJson.mandatory_skills),
+        good_to_have_skills: cleanArray(parsedJson.good_to_have_skills),
+        raw: rawContent
+      };
+    }
+    
+    // --- Attempt 2: Text-based fallback (extract from bulleted markdown) ---
+    console.warn('[JD Refine] JSON parse failed, attempting text-based extraction...');
+    return _parseJdSkillsFromText(clean, rawContent);
   } catch (err) {
     console.error('_generateRefinedJD error:', err.message);
-    return null;
+    // Last resort: try to parse whatever raw content we got
+    if (rawContent) {
+      const stripped = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<\/think>/gi, '').trim();
+      return _parseJdSkillsFromText(stripped, rawContent);
+    }
+    return { key_skills: [], mandatory_skills: [], good_to_have_skills: [], raw: '' };
   }
+}
+
+/**
+ * Fallback text-based parser for JD skills when JSON parsing fails.
+ * Extracts skills from markdown bulleted lists with section headers.
+ * @private
+ */
+function _parseJdSkillsFromText(text, rawContent) {
+  const NOISE_PHRASES = [
+    'wait,', 'hmm,', 'i need', 'the user', 'so that', 'maybe', 'perhaps',
+    'actually', 'however', 'but the', 'deep understanding', 'experience with',
+    'the mention', 'this is', 'might struggle', 'another key', 'for the role',
+    'the candidate', 'the jd', 'the role', 'the panel', 'specific database',
+    'it is', "it's", 'which', 'that is', 'let me', 'need to check',
+    'the rules', 'the example', 'inference', 'thinking about', "i'm", 'i think',
+    'okay,', 'let\'s', 'first,', 'now,', 'so,', 'in the', 'from the',
+    'this suggests', 'this implies', 'this means', 'should be', 'would be',
+    'could be', 'can be', 'there is', 'there are', 'these are', 'those are',
+    'compiling', 'categorizing', 'listed under', 'mentioned in', 'getting complicated'
+  ];
+
+  const seenSkills = new Set();
+  function extractBullets(block) {
+    if (!block) return [];
+    let lines = block.trim().split('\n');
+    if (lines.length === 1 && (lines[0].includes(',') || lines[0].includes(';'))) {
+      lines = lines[0].split(/[,;]/);
+    }
+    return lines
+      .map(l => l.replace(/^[\s*•\-]+/, '').replace(/^\d+\.\s*/, '').trim())
+      .filter(l => {
+        if (!l || l.length <= 1) return false;
+        const lower = l.toLowerCase();
+        if (l.split(/\s+/).length > 8) return false;
+        if (NOISE_PHRASES.some(p => lower.includes(p))) return false;
+        if (lower === 'and' || lower === '&') return false;
+        if (seenSkills.has(lower)) return false;
+        seenSkills.add(lower);
+        return true;
+      })
+      .map(l => l.replace(/[.,;:]+$/, '').replace(/^and\s+/i, '').replace(/\s+and$/i, '').trim())
+      .filter(l => l.length > 1);
+  }
+
+  // Try to find section headers
+  const keyMatch = text.match(/(?:[#*]*\s*)?Key\s*Skills\s*[:*]*\s*([\s\S]*?)(?=(?:[#*]*\s*)?(?:Mandatory|Good\s*To\s*Have)\s*Skills|$)/i);
+  const mandatoryMatch = text.match(/(?:[#*]*\s*)?Mandatory\s*Skills\s*[:*]*\s*([\s\S]*?)(?=(?:[#*]*\s*)?(?:Key|Good\s*To\s*Have)\s*Skills|$)/i);
+  const goodMatch = text.match(/(?:[#*]*\s*)?Good\s*To\s*Have\s*(?:Skills)?\s*[:*]*\s*([\s\S]*?)(?=(?:[#*]*\s*)?(?:Key|Mandatory)\s*Skills|$)/i);
+
+  const key_skills = extractBullets(keyMatch?.[1]);
+  const mandatory_skills = extractBullets(mandatoryMatch?.[1]);
+  const good_to_have_skills = extractBullets(goodMatch?.[1]);
+
+  return { key_skills, mandatory_skills, good_to_have_skills, raw: rawContent };
 }
 
 

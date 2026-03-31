@@ -8,7 +8,8 @@ import {
   X, 
   AlertCircle,
   FileCode,
-  FileSearch
+  FileSearch,
+  Copy
 } from 'lucide-react';
 
 
@@ -26,6 +27,7 @@ export function ExtractDetailsForm() {
   const [candidateName, setCandidateName] = useState('');
   const [panelMemberId, setPanelMemberId] = useState('');
   const [panelMemberEmail, setPanelMemberEmail] = useState('');
+  const [jdText, setJdText] = useState('');
   
   const [jdFile, setJdFile] = useState<File | null>(null);
   const [l1File, setL1File] = useState<File | null>(null);
@@ -72,6 +74,7 @@ export function ExtractDetailsForm() {
     formData.append('candidateName', candidateName);
     formData.append('panelMemberId', panelMemberId);
     formData.append('panelMemberEmail', panelMemberEmail);
+    formData.append('jdText', jdText);
 
     try {
       const response = await apiClient.post(`/api/v1/extract/${type}`, formData, {
@@ -107,18 +110,24 @@ export function ExtractDetailsForm() {
       let headers = result.type === 'l1' ? l1Headers : result.type === 'l2' ? l2Headers : jdHeaders;
       Object.keys(data).forEach(key => { if (!headers.includes(key)) headers.push(key); });
 
+      const EXCEL_CELL_LIMIT = 32767;
+
       const formatValue = (val: any, header?: string) => {
         if (val === null || val === undefined) return '""';
         let str = String(val);
+        // Remove non-printable characters except tab and newline
         str = str.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/[^\x09\x0A\x20-\x7E\xA0-\xFF]/g, ' ');
 
         const isLongField = header === 'L1 Transcript' || header === 'L2 Rejected Reason' || header === 'JD';
-        if (isLongField && str.length > 30000) {
-          // Only basic normalization, no shortening as requested
-          str = str.replace(/\n\s*\n/g, '\n').split('\n').map(l => l.trim()).join('\n');
-          
-          // NOTE: If we don't truncate at 32,767, Excel WILL split the row.
-          // We will leave it for now as the user insisted, but added a safe 64k limit for the CSV parser itself.
+        if (isLongField) {
+          // Replace all newlines with a single space to keep everything in ONE row
+          str = str.replace(/\n+/g, ' ');
+          // Collapse multiple spaces
+          str = str.replace(/  +/g, ' ').trim();
+          // NOTE: Excel can only display 32,767 chars per cell. The CSV FILE has all
+          // the data — the evaluation pipeline reads the full text correctly.
+          // If you need to view the complete transcript, open the CSV in Google Sheets
+          // or a text editor instead of Excel.
         }
         return `"${str.replace(/"/g, '""')}"`;
       };
@@ -193,6 +202,19 @@ export function ExtractDetailsForm() {
         </div>
       </div>
 
+      {/* JD Text Input (Used for L1/L2 extraction if provided) */}
+      <div className="bg-white/[0.01] p-4 rounded-lg border border-white/5">
+        <label className="block text-xs font-semibold uppercase tracking-widest text-text-muted mb-2">
+          Extracted JD Text (Copy from JD Extract below and paste here to use for L1/L2)
+        </label>
+        <textarea
+          value={jdText}
+          onChange={(e) => setJdText(e.target.value)}
+          placeholder="Paste extracted Job Description text here..."
+          className="w-full h-24 bg-white/[0.02] border border-white/10 rounded-lg px-4 py-2 text-sm text-text-primary focus:outline-none focus:border-primary/50 transition-colors resize-y"
+        />
+      </div>
+
       {/* Panel Details Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white/[0.01] p-4 rounded-lg border border-white/5">
         <div>
@@ -247,6 +269,13 @@ export function ExtractDetailsForm() {
           loading={loading.jd}
           result={results.jd}
           onDownload={() => results.jd && downloadCSV(results.jd)}
+          onCopy={() => {
+            if (results.jd?.data?.JD) {
+              navigator.clipboard.writeText(results.jd.data.JD);
+              // Also auto-populate the textarea for convenience
+              setJdText(results.jd.data.JD);
+            }
+          }}
           accentColor="indigo"
         />
         <ExtractionCard
@@ -290,6 +319,7 @@ interface ExtractionCardProps {
   loading: boolean;
   result: ExtractionResult | null;
   onDownload: () => void;
+  onCopy?: () => void;
   accentColor: 'indigo' | 'orange' | 'emerald';
 }
 
@@ -303,6 +333,7 @@ function ExtractionCard({
   loading,
   result,
   onDownload,
+  onCopy,
   accentColor
 }: ExtractionCardProps) {
 
@@ -363,13 +394,26 @@ function ExtractionCard({
               )}
             </button>
           ) : (
-            <button
-              onClick={onDownload}
-              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              Download CSV
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={onDownload}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
+                title="Download CSV"
+              >
+                <Download className="w-4 h-4" />
+                CSV
+              </button>
+              {onCopy && (
+                <button
+                  onClick={onCopy}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/30 transition-colors"
+                  title="Copy text & use in L1/L2"
+                >
+                  <Copy className="w-4 h-4" />
+                  Copy
+                </button>
+              )}
+            </div>
           )}
 
 
