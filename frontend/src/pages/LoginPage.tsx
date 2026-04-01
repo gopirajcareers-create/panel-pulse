@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import {
   CheckCircle,
   Mail,
@@ -16,6 +16,15 @@ import { apiClient } from '@/lib/api/client';
 import { useAuth } from '@/context/AuthContext';
 import type { AuthUser } from '@/context/AuthContext';
 import TermsModal from '@/components/auth/TermsModal';
+import { API_BASE_URL } from '@/lib/api/client';
+
+const SSO_ERROR_MESSAGES: Record<string, string> = {
+  sso_denied: 'SSO sign-in was cancelled or denied.',
+  sso_no_code: 'SSO did not return an authorization code. Please try again.',
+  sso_token_failed: 'Failed to complete SSO sign-in. Please try again.',
+  sso_init_failed: 'SSO is not configured on the server. Contact IT support.',
+  unauthorized_domain: 'Only @indium.tech accounts are allowed.',
+};
 
 const ALLOWED_DOMAIN = '@indium.tech';
 const OTP_LENGTH = 6;
@@ -26,10 +35,15 @@ type Mode = 'password' | 'otp-email' | 'otp-code';
 export default function LoginPage() {
   const navigate = useNavigate();
   const { user, setUser } = useAuth();
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     if (user) navigate('/', { replace: true });
   }, [user, navigate]);
+
+  // Show SSO error if redirected back with ?error=...
+  const ssoError = searchParams.get('error');
+  const initialError = ssoError ? (SSO_ERROR_MESSAGES[ssoError] || 'SSO sign-in failed.') : '';
 
   // Mode: password login (default), OTP email step, OTP code step
   const [mode, setMode] = useState<Mode>('password');
@@ -48,7 +62,7 @@ export default function LoginPage() {
   const [testOtp, setTestOtp] = useState('');
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  const [error, setError] = useState('');
+  const [error, setError] = useState(initialError);
   const [loading, setLoading] = useState(false);
 
   // Countdown timer for OTP resend
@@ -330,6 +344,32 @@ export default function LoginPage() {
                   <KeyRound className="w-3 h-3" /> Sign in with email code
                 </button>
               </div>
+
+              {/* Microsoft SSO */}
+              <div className="relative my-1">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-border-primary" />
+                </div>
+                <div className="relative flex justify-center text-xs">
+                  <span className="bg-bg-base px-2 text-text-muted">or</span>
+                </div>
+              </div>
+
+              <a
+                href={`${API_BASE_URL}/api/v1/auth/azure/login`}
+                className="w-full flex items-center justify-center gap-3 border border-border-primary
+                           hover:bg-white/5 text-text-secondary hover:text-text-primary
+                           font-medium text-sm rounded-xl py-3 transition-colors"
+              >
+                {/* Microsoft logo SVG */}
+                <svg width="18" height="18" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
+                  <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
+                  <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
+                  <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
+                </svg>
+                Sign in with Microsoft
+              </a>
             </form>
           )}
 

@@ -10,6 +10,7 @@ const panelRoutes = require('./routes/panel');
 const extractRoutes = require('./routes/extract');
 const chatRoutes = require('./routes/chat');
 const authRoutes = require('./routes/auth');
+const azureAuthRoutes = require('./routes/azureAuth');
 const requireAuth = require('./middleware/requireAuth');
 const { connectToMongo } = require('./services/mongoClient');
 
@@ -53,6 +54,7 @@ app.use((req, res, next) => {
 
 // Auth routes (public — no requireAuth)
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/auth/azure', azureAuthRoutes);
 
 // Health (public)
 app.use('/api/v1/health', healthRoutes);
