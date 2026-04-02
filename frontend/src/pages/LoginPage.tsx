@@ -49,10 +49,10 @@ export default function LoginPage() {
       <div className="relative z-10 flex flex-col items-center gap-8 px-6 text-center">
         <div className="space-y-3">
           <h1 className="text-4xl sm:text-5xl font-bold text-white tracking-tight">
-            Welcome to Indium
+            Welcome to Panel Pulse AI
           </h1>
           <p className="text-base text-white/60">
-            Panel Pulse AI — Please sign in to continue
+            An AI Powered Panel Evaluation system
           </p>
         </div>
 
@@ -65,7 +65,7 @@ export default function LoginPage() {
 
         <a
           href={`${SSO_BASE}/api/v1/auth/azure/login`}
-          className="inline-flex items-center gap-3 bg-[#F5A623] hover:bg-[#e09510] text-white font-semibold text-base px-10 py-3.5 rounded-full shadow-lg shadow-orange-500/30 transition-all duration-200 hover:shadow-orange-500/50 hover:scale-[1.03] active:scale-[0.98]"
+          className="inline-flex items-center gap-3 bg-[#E8641F] hover:bg-[#D65F1A] text-white font-semibold text-base px-10 py-3.5 rounded-full shadow-lg shadow-orange-600/40 transition-all duration-200 hover:shadow-orange-600/60 hover:scale-[1.03] active:scale-[0.98]"
         >
           Sign In
         </a>
