@@ -86,8 +86,6 @@ export default function LoginPage() {
   );
 }
 
-
-  // Show SSO error if redirected back with ?error=...
   const ssoError = searchParams.get('error');
   const initialError = ssoError ? (SSO_ERROR_MESSAGES[ssoError] || 'SSO sign-in failed.') : '';
 
