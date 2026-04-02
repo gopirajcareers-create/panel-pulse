@@ -264,9 +264,45 @@ export function ExtractDetailsForm() {
           onDownload={() => results.jd && downloadCSV(results.jd)}
           onCopy={() => {
             if (results.jd?.data?.JD) {
-              navigator.clipboard.writeText(results.jd.data.JD);
-              // Also auto-populate the textarea for convenience
-              setJdText(results.jd.data.JD);
+              const textToCopy = String(results.jd.data.JD);
+              
+              const fallbackCopy = () => {
+                const textArea = document.createElement("textarea");
+                textArea.value = textToCopy;
+                // Place it out of view but avoid scrolling on focus
+                textArea.style.position = "fixed";
+                textArea.style.top = "0";
+                textArea.style.left = "0";
+                textArea.style.width = "2em";
+                textArea.style.height = "2em";
+                textArea.style.padding = "0";
+                textArea.style.border = "none";
+                textArea.style.outline = "none";
+                textArea.style.boxShadow = "none";
+                textArea.style.background = "transparent";
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                try {
+                  document.execCommand('copy');
+                } catch (err) {
+                  console.error('Fallback copy failed', err);
+                }
+                document.body.removeChild(textArea);
+              };
+
+              // Try modern API first, but fallback if it fails or is unavailable
+              if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(textToCopy).catch((err) => {
+                  console.warn("Modern copy failed, trying fallback...", err);
+                  fallbackCopy();
+                });
+              } else {
+                // Not in secure context (like HTTP on a VM), jump straight to fallback
+                fallbackCopy();
+              }
+              
+              setJdText(textToCopy);
             }
           }}
           accentColor="indigo"
