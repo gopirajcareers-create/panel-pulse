@@ -1,21 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
-import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import {
-  CheckCircle,
-  Mail,
-  Lock,
-  KeyRound,
-  AlertCircle,
-  Loader2,
-  ArrowRight,
-  RefreshCw,
-  Eye,
-  EyeOff,
-} from 'lucide-react';
-import { apiClient } from '@/lib/api/client';
+import { useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { AlertCircle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import type { AuthUser } from '@/context/AuthContext';
-import TermsModal from '@/components/auth/TermsModal';
 import { API_BASE_URL } from '@/lib/api/client';
 
 // For the SSO link, always use an absolute URL based on the current origin
@@ -23,27 +9,83 @@ import { API_BASE_URL } from '@/lib/api/client';
 const SSO_BASE = API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 
 const SSO_ERROR_MESSAGES: Record<string, string> = {
-  sso_denied: 'SSO sign-in was cancelled or denied.',
-  sso_no_code: 'SSO did not return an authorization code. Please try again.',
-  sso_token_failed: 'Failed to complete SSO sign-in. Please try again.',
+  sso_denied: 'Sign-in was cancelled or denied.',
+  sso_no_code: 'Sign-in did not complete. Please try again.',
+  sso_token_failed: 'Failed to complete sign-in. Please try again.',
   sso_init_failed: 'SSO is not configured on the server. Contact IT support.',
   unauthorized_domain: 'Only @indium.tech accounts are allowed.',
 };
 
-const ALLOWED_DOMAIN = '@indium.tech';
-const OTP_LENGTH = 6;
-const RESEND_COOLDOWN = 60;
-
-type Mode = 'password' | 'otp-email' | 'otp-code';
-
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { user, setUser } = useAuth();
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
 
   useEffect(() => {
     if (user) navigate('/', { replace: true });
   }, [user, navigate]);
+
+  const ssoError = searchParams.get('error');
+  const errorMessage = ssoError ? (SSO_ERROR_MESSAGES[ssoError] || 'Sign-in failed. Please try again.') : '';
+
+  return (
+    <div className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden bg-[#0a0a0f]">
+
+      {/* Background: animated gradient orbs */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full bg-orange-600/20 blur-[120px]" />
+        <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] rounded-full bg-amber-500/15 blur-[100px]" />
+        <div className="absolute top-[40%] left-[50%] w-[300px] h-[300px] -translate-x-1/2 rounded-full bg-orange-800/10 blur-[80px]" />
+        {/* Grid overlay */}
+        <div
+          className="absolute inset-0 opacity-[0.04]"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(255,140,0,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,140,0,0.5) 1px, transparent 1px)',
+            backgroundSize: '60px 60px',
+          }}
+        />
+      </div>
+
+      {/* Indium logo — top right */}
+      <div className="absolute top-6 right-8">
+        <img src="/INDIUM LOGO.png" alt="Indium" className="h-8 object-contain" />
+      </div>
+
+      {/* Centre content */}
+      <div className="relative z-10 flex flex-col items-center gap-8 px-6 text-center">
+        <div className="space-y-3">
+          <h1 className="text-4xl sm:text-5xl font-bold text-white tracking-tight">
+            Welcome to Indium
+          </h1>
+          <p className="text-base text-white/60">
+            Panel Pulse AI — Please sign in to continue
+          </p>
+        </div>
+
+        {/* Error banner */}
+        {errorMessage && (
+          <div className="flex items-center gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 max-w-sm w-full">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            {errorMessage}
+          </div>
+        )}
+
+        {/* Sign in button */}
+        <a
+          href={`${SSO_BASE}/api/v1/auth/azure/login`}
+          className="inline-flex items-center gap-3 bg-[#F5A623] hover:bg-[#e09510]
+                     text-white font-semibold text-base px-10 py-3.5 rounded-full
+                     shadow-lg shadow-orange-500/30 transition-all duration-200
+                     hover:shadow-orange-500/50 hover:scale-[1.03] active:scale-[0.98]"
+        >
+          Sign In
+        </a>
+      </div>
+    </div>
+  );
+}
+
 
   // Show SSO error if redirected back with ?error=...
   const ssoError = searchParams.get('error');
