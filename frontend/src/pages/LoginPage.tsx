@@ -27,20 +27,7 @@ export default function LoginPage() {
   const errorMessage = ssoError ? (SSO_ERROR_MESSAGES[ssoError] || 'Sign-in failed. Please try again.') : '';
 
   return (
-    <div className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden bg-[#0f1419]">
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full bg-orange-600/20 blur-[120px]" />
-        <div className="absolute bottom-[-20%] right-[-10%] w-[500px] h-[500px] rounded-full bg-amber-500/15 blur-[100px]" />
-        <div className="absolute top-[40%] left-[50%] w-[300px] h-[300px] -translate-x-1/2 rounded-full bg-orange-800/10 blur-[80px]" />
-        <div
-          className="absolute inset-0 opacity-[0.04]"
-          style={{
-            backgroundImage:
-              'linear-gradient(rgba(255,140,0,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,140,0,0.5) 1px, transparent 1px)',
-            backgroundSize: '60px 60px',
-          }}
-        />
-      </div>
+    <div className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden bg-[#111827]">
 
       <div className="absolute top-6 right-8">
         <img src="/INDIUM LOGO.png" alt="Indium" className="h-8 object-contain" />
