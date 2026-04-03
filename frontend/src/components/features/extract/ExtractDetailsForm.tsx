@@ -9,7 +9,8 @@ import {
   AlertCircle,
   FileCode,
   FileSearch,
-  Copy
+  Copy,
+  Zap
 } from 'lucide-react';
 
 
@@ -151,7 +152,7 @@ export function ExtractDetailsForm() {
   return (
     <div className="bg-bg-card rounded-xl border border-white/[0.06] p-6 space-y-6 mb-8">
       <div className="flex items-center gap-2">
-        <FileSearch className="w-5 h-5 text-primary" />
+        <Zap className="w-5 h-5 text-orange-400" />
         <h2 className="text-xl font-bold text-text-primary">Extract Details</h2>
       </div>
 
@@ -195,19 +196,6 @@ export function ExtractDetailsForm() {
         </div>
       </div>
 
-      {/* JD Text Input (Used for L1/L2 extraction if provided) */}
-      <div className="bg-white/[0.01] p-4 rounded-lg border border-white/5">
-        <label className="block text-xs font-semibold uppercase tracking-widest text-text-muted mb-2">
-          Extracted JD Text (Copy from JD Extract below and paste here to use for L1/L2)
-        </label>
-        <textarea
-          value={jdText}
-          onChange={(e) => setJdText(e.target.value)}
-          placeholder="Paste extracted Job Description text here..."
-          className="w-full h-24 bg-white/[0.02] border border-white/10 rounded-lg px-4 py-2 text-sm text-text-primary focus:outline-none focus:border-primary/50 transition-colors resize-y"
-        />
-      </div>
-
       {/* Panel Details Section */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white/[0.01] p-4 rounded-lg border border-white/5">
         <div>
@@ -236,11 +224,24 @@ export function ExtractDetailsForm() {
         </div>
       </div>
 
+      {/* JD Text Input (Used for L1/L2 extraction if provided) */}
+      <div className="bg-white/[0.01] p-4 rounded-lg border border-white/5">
+        <label className="block text-xs font-semibold uppercase tracking-widest text-text-muted mb-2">
+          Extracted JD Text (Copy from JD Extract below and paste here to use for L1/L2)
+        </label>
+        <textarea
+          value={jdText}
+          onChange={(e) => setJdText(e.target.value)}
+          placeholder="Paste extracted Job Description text here..."
+          className="w-full h-24 bg-white/[0.02] border border-white/10 rounded-lg px-4 py-2 text-sm text-text-primary focus:outline-none focus:border-primary/50 transition-colors resize-y"
+        />
+      </div>
+
       <div className="flex items-center gap-2 text-xs text-text-muted italic border-l-2 border-primary/30 pl-3">
         <div className="p-1 bg-primary/10 rounded">
           <Check className="w-3 h-3 text-primary" />
         </div>
-        <span>The L1 Transcript will be saved in a single cell. Use Excel's "Wrap Text" to view long transcripts.</span>
+        <span className="font-bold text-primary">1st run the jd and click the copy button and they try to run l1 and l2</span>
       </div>
 
       {error && (
@@ -253,7 +254,7 @@ export function ExtractDetailsForm() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {/* JD Extraction */}
         <ExtractionCard
-          title="1) JD Extract"
+          title="1) JD"
           subtitle="Support .docx, .pdf"
           file={jdFile}
           onFileChange={(e) => handleFileChange(e, 'jd')}
@@ -308,7 +309,7 @@ export function ExtractDetailsForm() {
           accentColor="indigo"
         />
         <ExtractionCard
-          title="2) L1 Transcript"
+          title="2) L1"
           subtitle="Support .docx, .pdf"
           file={l1File}
           onFileChange={(e) => handleFileChange(e, 'l1')}
@@ -320,7 +321,7 @@ export function ExtractDetailsForm() {
           accentColor="orange"
         />
         <ExtractionCard
-          title="3) L2 Rejection"
+          title="3) L2"
           subtitle="Support .docx, .pdf, .xlsx, .csv"
           file={l2File}
           onFileChange={(e) => handleFileChange(e, 'l2')}

@@ -67,7 +67,11 @@ async function callLLM(userPrompt, systemPrompt) {
 async function extractJD(text, jobId) {
   const systemPrompt = "You are a JD parser. Return ONLY valid JSON. Ensure all strings are JSON-safe (no raw newlines inside values; use \\n instead).";
   const userPrompt = `Extract the full Job Description text from the content below.
-Return a JSON object with: { "Job Interview ID": "${jobId}", "JD": "extracted full text" }
+Return a JSON object EXACTLY matching this schema:
+{
+  "Job Interview ID": "${jobId}",
+  "JD": "EXTRACT THE ACTUAL FULL ORIGINAL TEXT CONTENT OF THE JD HERE"
+}
 
 Content:
 ${text}`;

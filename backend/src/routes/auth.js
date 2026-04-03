@@ -258,6 +258,18 @@ router.post('/verify-otp', async (req, res) => {
   return res.json(sessionPayload);
 });
 
+// ── POST /api/v1/auth/bypass (TESTING ONLY) ────────────────────────────────
+router.post('/bypass', (req, res) => {
+  const payload = { 
+    email: 'test@indium.tech',
+    firstName: 'Test',
+    lastName: 'User',
+    role: 'admin'
+  };
+  issueSessionCookie(res, payload);
+  return res.json(payload);
+});
+
 // ── GET /api/v1/auth/me ────────────────────────────────────────────────────
 router.get('/me', async (req, res) => {
   const token = req.cookies?.pp_token;

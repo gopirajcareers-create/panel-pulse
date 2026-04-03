@@ -5,7 +5,7 @@ import type { ChatMessage, ChatHistoryEntry, ChatSource, SearchMode, ChatSearchS
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
-import { Send, Bot, User, Sparkles, ChevronDown, ChevronUp, Zap, SlidersHorizontal, X } from 'lucide-react';
+import { Send, Bot, User, Sparkles, ChevronDown, ChevronUp, Zap, SlidersHorizontal, X, Copy, Check } from 'lucide-react';
 
 // ─── Starter questions ───────────────────────────────────────────────────────
 
@@ -204,18 +204,33 @@ function SearchSettingsPanel({
 
 // ─── Typing indicator ─────────────────────────────────────────────────────────
 
+const LOADING_MESSAGES = [
+  "Filtering through Evaluation Signals...",
+  "Stitching together Transcript Echoes...",
+  "Thinking really hard...",
+  "Pretending this is easy...",
+  "Crafting the Ultimate Panel Verdict..."
+];
+
 function TypingIndicator() {
+  const [msgIndex, setMsgIndex] = useState(0);
+
+  useEffect(() => {
+    const int = setInterval(() => {
+      setMsgIndex((prev) => (prev + 1) % LOADING_MESSAGES.length);
+    }, 2000);
+    return () => clearInterval(int);
+  }, []);
+
   return (
     <div className="flex items-end gap-3 mb-5 justify-start">
       <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500/30 to-purple-600/20 border border-indigo-500/30 flex items-center justify-center flex-shrink-0">
-        <Bot className="w-4 h-4 text-indigo-400" />
+        <Bot className="w-4 h-4 text-indigo-400 animate-pulse" />
       </div>
       <div className="bg-slate-800/60 border border-slate-700/50 rounded-2xl rounded-bl-sm px-4 py-3">
-        <div className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-          <span className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-          <span className="w-2 h-2 rounded-full bg-indigo-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-        </div>
+        <p className="text-sm text-indigo-300 italic animate-pulse">
+          {LOADING_MESSAGES[msgIndex]}
+        </p>
       </div>
     </div>
   );
@@ -286,6 +301,31 @@ function SourcesAccordion({ sources }: { sources: ChatSource[] }) {
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === 'user';
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    const textToCopy = msg.content;
+    const fallbackCopy = () => {
+      const textArea = document.createElement("textarea");
+      textArea.value = textToCopy;
+      textArea.style.position = "fixed";
+      textArea.style.top = "0";
+      textArea.style.left = "0";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try { document.execCommand('copy'); } catch (err) {}
+      document.body.removeChild(textArea);
+    };
+
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(textToCopy).catch(() => fallbackCopy());
+    } else {
+      fallbackCopy();
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <div
@@ -334,10 +374,22 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         </div>
 
 
-        {/* Timestamp */}
-        <span className="text-[10px] text-slate-600 mt-1 px-1">
-          {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </span>
+        {/* Timestamp & Actions */}
+        <div className="flex items-center gap-2 mt-1 px-1">
+          <span className="text-[10px] text-slate-600">
+            {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </span>
+          {!isUser && (
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors ml-2"
+              title="Copy to clipboard"
+            >
+              {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+              {copied ? <span className="text-emerald-400 font-medium">Copied!</span> : <span>Copy</span>}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* User avatar — right */}

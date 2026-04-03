@@ -16,6 +16,8 @@ const SECTION_HEADERS = [
   'Identified Gaps',
   'Identification Gap',
   'Identification Gaps',
+  'Recommendation',
+  'Recommendations',
   'Overall Effectiveness',
   'Based on',
 ];
@@ -107,11 +109,11 @@ export function PanelSummaryCard({ summary, gapAnalysis, scoreCategory }: Props)
       {gapAnalysis && (
         <div className="pt-4 border-t border-white/5 space-y-3">
           <div className="flex gap-3">
-            <h4 className="text-xs font-bold text-orange-400 uppercase tracking-widest">Identified Gaps</h4>
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500/50 animate-pulse" />
+            <h4 className="text-xs font-bold text-orange-400 uppercase tracking-widest">Recommendation</h4>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/50 animate-pulse" />
           </div>
-          <div className="border-l-4 border-l-red-500/50 pl-4">
-            <ul className="list-disc pl-5 space-y-1.5 text-sm text-text-primary marker:text-red-400/80">
+          <div className="border-l-4 border-l-emerald-500/50 pl-4">
+            <ul className="list-disc pl-5 space-y-1.5 text-sm text-text-primary marker:text-emerald-400/80">
               {gapAnalysis
                 .split('\n')
                 .map((line) => stripMarkdown(line.trim().replace(/^[-*•]\s*/, '')))

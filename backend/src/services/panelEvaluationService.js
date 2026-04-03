@@ -61,7 +61,7 @@ CRITICAL FORMAT RULES — follow EXACTLY:
    
    Rejection Reason Validation: <detailed analysis of how well the panel validated the candidate's actual L2 rejection reasons>
    
-   Identified Gaps: <detailed analysis of specific probing gaps found in this interview>
+   Recommendation: <friendly, neat, and highly constructive recommendations for the interviewer to improve>
 
 2. Write 3-4 detailed, professional points for each section.
 3. DO NOT use **bold**, *italic*, or any markdown formatting. Plain text only.
@@ -72,8 +72,8 @@ CRITICAL FORMAT RULES — follow EXACTLY:
    - Score < 8.0 or SURFACE/NO_PROBING: Direct and constructive, naming specific missed areas.
 7. Make every section specific to the actual JD skills and transcript content — no generic filler.`;
 
-const GAP_ANALYSIS_SYSTEM_PROMPT = `You are a Quality Assurance Specialist for interview panels. 
-Your task is to write a short "Gap Analysis" summary based on the L2 Rejection Reasons and the panel's scoring gaps.
+const GAP_ANALYSIS_SYSTEM_PROMPT = `You are a friendly and professional HR Quality Assurance Specialist. 
+Your task is to write a short "Recommendation" summary based on the L2 Rejection Reasons and the panel's scoring gaps.
 
 Analyze:
 1. Did the panel fail to ask enough questions in the areas where the candidate was rejected?
@@ -81,8 +81,8 @@ Analyze:
 3. What specifically should the panel have probed deeper on to confirm the rejection earlier?
 
 Rules:
-1. Be direct and constructive.
-2. Focus ONLY on the gaps in the panel member's probing behavior.
+1. Be highly polite, friendly, neat, and highly constructive.
+2. Focus on actionable recommendations for the panel member to improve their probing behavior.
 3. Format as a bulleted markdown list. No intro/outro.`;
 
 const L2_VALIDATION_SYSTEM_PROMPT = `You are an L2 validation expert reviewing rejection reasons.
@@ -783,7 +783,7 @@ ${String(jd || '').substring(0, 500)}
 Evidence of Panel Questioning:
 ${JSON.stringify(evaluation.evidence || {}, null, 2)}
 
-Provide a bulleted list analyzing why the panel failed to probe deep enough to catch these rejection reasons earlier, and identifying the specific "probing gaps".`;
+Provide a bulleted list analyzing why the panel failed to probe deep enough to catch these rejection reasons earlier, and providing specific, friendly, and neat recommendations for the interviewer to improve. Tone MUST be professional and supportive for HR feedback.`;
 
     const summary = await _callGroqWithRetry(userPrompt, GAP_ANALYSIS_SYSTEM_PROMPT);
     return summary.trim();
