@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BarChart3, Upload, MessageSquare, Check, Users } from 'lucide-react';
+import { BarChart3, Upload, MessageSquare, Check, Users, FileSearch } from 'lucide-react';
 
 interface NavItem {
   id: string;
@@ -37,6 +37,13 @@ const navItems: NavItem[] = [
     label: 'Chat',
     path: '/chat',
     description: 'Ask the AI',
+  },
+  {
+    id: 'name-extract',
+    icon: <FileSearch className="w-5 h-5" />,
+    label: 'Smart Extract',
+    path: '/name-extract',
+    description: 'Extract & evaluate',
   },
 ];
 

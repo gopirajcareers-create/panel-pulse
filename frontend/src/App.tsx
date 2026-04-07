@@ -11,6 +11,7 @@ import ResultsPage from './pages/ResultsPage';
 import ChatPage from './pages/ChatPage';
 import PanelInsightsPage from './pages/PanelInsightsPage';
 import PanelProfilePage from './pages/PanelProfilePage';
+import NameExtractPage from './pages/NameExtractPage';
 
 function App() {
   return (
@@ -37,6 +38,7 @@ function App() {
           <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
           <Route path="/panels" element={<ProtectedRoute><PanelInsightsPage /></ProtectedRoute>} />
           <Route path="/panels/:panelName" element={<ProtectedRoute><PanelProfilePage /></ProtectedRoute>} />
+          <Route path="/name-extract" element={<ProtectedRoute><NameExtractPage /></ProtectedRoute>} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

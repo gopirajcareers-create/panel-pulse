@@ -30,7 +30,7 @@ export default function LoginPage() {
     <div className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden bg-[#111827]">
 
       <div className="absolute top-6 right-8">
-        <img src="/INDIUM LOGO.png" alt="Indium" className="h-8 object-contain" />
+        <img src="/logo.png" alt="Indium" className="h-8 object-contain" />
       </div>
 
       <div className="relative z-10 flex flex-col items-center gap-8 px-6 text-center">
