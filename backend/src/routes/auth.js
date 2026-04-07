@@ -260,10 +260,17 @@ router.post('/verify-otp', async (req, res) => {
 
 // ── POST /api/v1/auth/bypass (TESTING ONLY) ────────────────────────────────
 router.post('/bypass', (req, res) => {
+  const { email, password } = req.body || {};
+  const allowedEmails = ['deepak@test.tech', 'gopi@test.tech', 'kumar@test.tech', 'testd@indium.tech'];
+  
+  if (!allowedEmails.includes(email) || password !== 'TEST123') {
+    return res.status(401).json({ error: 'Invalid test credentials.' });
+  }
+
   const payload = { 
-    email: 'test@indium.tech',
-    firstName: 'Test',
-    lastName: 'User',
+    email,
+    firstName: email.split('@')[0],
+    lastName: 'Test',
     role: 'admin'
   };
   issueSessionCookie(res, payload);
