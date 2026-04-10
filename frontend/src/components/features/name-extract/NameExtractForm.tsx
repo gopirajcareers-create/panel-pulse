@@ -433,14 +433,14 @@ export function NameExtractForm() {
                 <button
                   onClick={handleEvaluateDirectly}
                   disabled={evaluationLoading}
-                  className="px-5 py-2 bg-primary text-white hover:bg-primary/90 rounded-lg font-medium text-sm transition-colors flex items-center gap-2 shadow-lg shadow-primary/20 disabled:opacity-50"
+                  className="px-5 py-2 bg-orange-600 text-white hover:bg-orange-700 rounded-lg font-medium text-sm transition-colors flex items-center gap-2 shadow-lg shadow-orange-900/40 disabled:opacity-50"
                 >
                   {evaluationLoading ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <Play className="w-4 h-4" />
                   )}
-                  {evaluationLoading ? 'Evaluating...' : 'Evaluate Directly'}
+                  {evaluationLoading ? 'Evaluating...' : 'Evaluate'}
                 </button>
               </>
             )}

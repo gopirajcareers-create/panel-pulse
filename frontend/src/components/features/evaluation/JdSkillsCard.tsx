@@ -33,6 +33,7 @@ function SkillSection({ title, skills, icon, color, bgColor, borderColor }: Skil
     "it's", 'which', 'that is', 'let me', 'need to check', 'the rules',
     'the example', 'inference', 'thinking about', "i'm", 'i think',
     'so maybe', 'the panel', 'too.', 'that\'s a', 'but wait',
+    'mandatory', 'also', 'required by', 'mentioned earlier', 'so those'
   ];
 
   // Clean common AI noise/looping if it leaks into the data

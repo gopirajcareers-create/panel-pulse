@@ -31,7 +31,7 @@ const JD_REFINE_SYSTEM_PROMPT = `/no_think
 You are a Senior Recruitment Manager.
 Extract ONLY the specific technical skill keywords from the JD.
 
-Return ONLY a valid JSON object — no thinking, no explanation, no preamble:
+Return ONLY a valid JSON object — no thinking, no explanation, no preamble, no commentary:
 {
   "key_skills": ["Skill1", "Skill2"],
   "mandatory_skills": ["Skill1", "Skill2"],
@@ -39,10 +39,10 @@ Return ONLY a valid JSON object — no thinking, no explanation, no preamble:
 }
 
 RULES:
-1. Output ONLY the JSON object above. Nothing else.
-2. Each skill must be a short keyword (e.g. "Java", "Selenium", "CI/CD", "REST APIs").
-3. DO NOT repeat a skill across categories.
-4. DO NOT explain or justify. DO NOT output any reasoning.
+1. Output ONLY the JSON object. DO NOT output any other text before or after the JSON.
+2. Each skill must be a short keyword (1-3 words max, e.g. "Java", "CI/CD", "REST APIs").
+3. DO NOT include sentences or phrases like "so those are mandatory" or "experience with".
+4. DO NOT repeat a skill across categories.
 5. If the JD explicitly labels skills as "mandatory" or "required", put them in mandatory_skills.
 6. If the JD labels skills as "nice to have" or "preferred" or "plus", put them in good_to_have_skills.
 7. All other core skills go in key_skills.`;
@@ -622,12 +622,25 @@ ${jd}`;
     }
     
     if (parsedJson && (parsedJson.key_skills || parsedJson.mandatory_skills || parsedJson.good_to_have_skills)) {
+      // Shared noise filter logic
+      const isNoise = (s) => {
+        if (!s || s.length <= 1) return true;
+        const lower = s.toLowerCase();
+        // Skip sentences or reasoning-like strings
+        if (s.split(/\s+/).length > 6) return true; 
+        const NOISE_WORDS = ['mandatory', 'also', 'suggests', 'implies', 'means', 'should', 'would', 'could', 'think', 'believe', 'actually', 'however', 'but the', 'the jd', 'the role'];
+        if (NOISE_WORDS.some(p => lower.includes(p)) && (lower.includes('.') || lower.includes(' '))) return true;
+        return false;
+      };
+
       const cleanArray = (arr) => {
         if (!Array.isArray(arr)) return [];
         return arr
           .map(s => typeof s === 'string' ? s.trim() : '')
-          .filter(s => s.length > 1 && s.split(/\s+/).length <= 10);
+          .filter(s => !isNoise(s))
+          .map(s => s.replace(/[.,;:]+$/, '').replace(/^and\s+/i, '').replace(/\s+and$/i, '').trim());
       };
+
       return {
         key_skills: cleanArray(parsedJson.key_skills),
         mandatory_skills: cleanArray(parsedJson.mandatory_skills),
@@ -666,7 +679,8 @@ function _parseJdSkillsFromText(text, rawContent) {
     'okay,', 'let\'s', 'first,', 'now,', 'so,', 'in the', 'from the',
     'this suggests', 'this implies', 'this means', 'should be', 'would be',
     'could be', 'can be', 'there is', 'there are', 'these are', 'those are',
-    'compiling', 'categorizing', 'listed under', 'mentioned in', 'getting complicated'
+    'compiling', 'categorizing', 'listed under', 'mentioned in', 'getting complicated',
+    'mandatory', 'also', 'required by', 'mentioned earlier'
   ];
 
   const seenSkills = new Set();
