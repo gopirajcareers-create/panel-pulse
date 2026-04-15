@@ -207,7 +207,7 @@ function parseJSONSafely(text) {
   } catch (e) {
     console.error('[Extraction] JSON Parse Error:', e.message);
     console.error('[Extraction] Problematic Text:', text.substring(0, 500) + '...');
-    throw new Error('LLM returned invalid JSON for extraction. Please try again.');
+    throw new Error('Processing error: LLM slow response. Please try again');
   }
 }
 
