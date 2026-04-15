@@ -144,7 +144,11 @@ export default function ResultsPage() {
 
             {/* Dimension Grid */}
             <div className="lg:col-span-3">
-              <DimensionGrid dimensions={displayDimensions} evidence={displayEvidence} />
+              <DimensionGrid 
+                dimensions={displayDimensions} 
+                evidence={displayEvidence}
+                refinedJd={cachedEvaluation?.refinedJd || (cachedEvaluation ? null : useEvaluationStore.getState().refinedJd)}
+              />
             </div>
           </section>
 

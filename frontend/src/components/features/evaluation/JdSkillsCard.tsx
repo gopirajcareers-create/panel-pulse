@@ -33,7 +33,9 @@ function SkillSection({ title, skills, icon, color, bgColor, borderColor }: Skil
     "it's", 'which', 'that is', 'let me', 'need to check', 'the rules',
     'the example', 'inference', 'thinking about', "i'm", 'i think',
     'so maybe', 'the panel', 'too.', 'that\'s a', 'but wait',
-    'mandatory', 'also', 'required by', 'mentioned earlier', 'so those'
+    'mandatory', 'also', 'required by', 'mentioned earlier', 'so those',
+    'go into', 'skills go', 'key_skills', 'all other', 'core skills',
+    'mandatory_skills', 'good_to_have_skills'
   ];
 
   // Clean common AI noise/looping if it leaks into the data
@@ -90,9 +92,6 @@ export function JdSkillsCard({ refinedJd }: Props) {
       <div className="flex items-center gap-2">
         <BookOpen className="w-4 h-4 text-indigo-400" />
         <h3 className="text-base font-semibold text-text-primary">JD Skills Analysis</h3>
-        <span className="ml-auto text-[10px] font-medium uppercase tracking-widest text-text-muted bg-white/[0.04] border border-white/[0.06] px-2 py-0.5 rounded-full">
-          AI Refined
-        </span>
       </div>
 
       <div className="grid grid-cols-1 gap-3">

@@ -19,9 +19,10 @@ const BACKEND_LABEL_TO_KEY: Record<string, string> = {
 interface Props {
   dimensions: DimensionScores | null;
   evidence?: Record<string, string[]> | any[] | null;
+  refinedJd?: any;
 }
 
-export function DimensionGrid({ dimensions, evidence }: Props) {
+export function DimensionGrid({ dimensions, evidence, refinedJd }: Props) {
   const keys = Object.keys(DIMENSIONS) as Array<keyof DimensionScores>;
 
   // Normalize evidence to a keyed object
@@ -44,6 +45,7 @@ export function DimensionGrid({ dimensions, evidence }: Props) {
         const def = DIMENSIONS[key];
         const score = dimensions ? (dimensions as any)[key] ?? 0 : 0;
         const ev = normalizedEvidence[key] ?? [];
+        const mandatorySkills = key === 'mandatorySkillCoverage' ? refinedJd?.mandatory_skills : undefined;
 
         return (
           <DimensionCard
@@ -53,6 +55,7 @@ export function DimensionGrid({ dimensions, evidence }: Props) {
             maxScore={def.maxScore}
             evidence={ev}
             colour={def.colour}
+            mandatorySkills={mandatorySkills}
           />
         );
       })}

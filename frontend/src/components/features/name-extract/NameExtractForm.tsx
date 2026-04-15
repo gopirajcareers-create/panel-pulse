@@ -421,7 +421,7 @@ export function NameExtractForm() {
                 </div>
                 <button
                   onClick={() => navigate('/dashboard')}
-                  className="px-6 py-2.5 bg-primary text-white rounded-lg font-medium text-sm hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20"
+                  className="px-6 py-2.5 bg-orange-600 text-white hover:bg-orange-700 rounded-lg font-medium text-sm transition-colors shadow-lg shadow-orange-900/40"
                 >
                   View in Dashboard
                 </button>
