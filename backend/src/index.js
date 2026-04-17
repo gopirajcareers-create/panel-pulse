@@ -15,6 +15,7 @@ const requireAuth = require('./middleware/requireAuth');
 const { connectToMongo } = require('./services/mongoClient');
 
 const app = express();
+app.set('trust proxy', 1);   // trust first proxy (nginx) — req.protocol reflects X-Forwarded-Proto
 app.use(morgan('tiny'));
 app.use(cookieParser());
 app.use(express.json());

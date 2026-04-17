@@ -16,7 +16,6 @@ const AZURE_CLIENT_ID     = process.env.AZURE_CLIENT_ID;
 const AZURE_TENANT_ID     = process.env.AZURE_TENANT_ID;
 const AZURE_CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET;
 const AZURE_REDIRECT_URI  = process.env.AZURE_REDIRECT_URI || 'https://10.10.142.91/api/v1/auth/azure/callback';
-const FRONTEND_URL        = process.env.FRONTEND_URL || 'http://10.10.142.91';
 const JWT_SECRET          = process.env.JWT_SECRET || 'change-me-in-production';
 const ALLOWED_DOMAIN      = '@indium.tech';
 const SESSION_DURATION    = '8h';
@@ -70,7 +69,7 @@ router.get('/login', async (req, res) => {
     res.redirect(authUrl);
   } catch (err) {
     console.error('[AzureSSO] Failed to build auth URL:', err.message);
-    res.redirect(`${FRONTEND_URL}/login?error=sso_init_failed`);
+    res.redirect('/login?error=sso_init_failed');
   }
 });
 
@@ -84,11 +83,11 @@ router.get('/callback', async (req, res) => {
 
   if (error) {
     console.error('[AzureSSO] Callback error from Azure:', error, error_description);
-    return res.redirect(`${FRONTEND_URL}/login?error=sso_denied`);
+    return res.redirect('/login?error=sso_denied');
   }
 
   if (!code) {
-    return res.redirect(`${FRONTEND_URL}/login?error=sso_no_code`);
+    return res.redirect('/login?error=sso_no_code');
   }
 
   try {
@@ -107,7 +106,7 @@ router.get('/callback', async (req, res) => {
     // Enforce @indium.tech domain
     if (!email.endsWith(ALLOWED_DOMAIN)) {
       console.warn(`[AzureSSO] Rejected non-indium login attempt: ${email}`);
-      return res.redirect(`${FRONTEND_URL}/login?error=unauthorized_domain`);
+      return res.redirect('/login?error=unauthorized_domain');
     }
 
     const firstName = account?.name?.split(' ')[0] || '';
@@ -124,10 +123,10 @@ router.get('/callback', async (req, res) => {
     console.log(`[AzureSSO] ✓ User logged in via SSO: ${email}`);
 
     // Redirect to main app
-    res.redirect(`${FRONTEND_URL}/`);
+    res.redirect('/');
   } catch (err) {
     console.error('[AzureSSO] Token exchange failed:', err.message);
-    res.redirect(`${FRONTEND_URL}/login?error=sso_token_failed`);
+    res.redirect('/login?error=sso_token_failed');
   }
 });
 
@@ -139,12 +138,13 @@ router.get('/logout', (req, res) => {
   res.clearCookie('pp_token', { path: '/' });
 
   if (AZURE_TENANT_ID) {
+    const origin = `${req.protocol}://${req.get('host')}`;
     const msLogoutUrl = `https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/logout`
-      + `?post_logout_redirect_uri=${encodeURIComponent(FRONTEND_URL + '/login')}`;
+      + `?post_logout_redirect_uri=${encodeURIComponent(origin + '/login')}`;
     return res.redirect(msLogoutUrl);
   }
 
-  res.redirect(`${FRONTEND_URL}/login`);
+  res.redirect('/login');
 });
 
 module.exports = router;
