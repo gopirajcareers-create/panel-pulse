@@ -33,7 +33,9 @@ app.use((req, res, next) => {
     process.env.ALLOWED_ORIGIN,
     'http://localhost:5173',
     'http://localhost:5174',             // Added for local dev on alternate port
-    'http://localhost:3000'
+    'http://localhost:3000',
+    'http://10.10.142.91',              // Production VM (HTTP)
+    'https://10.10.142.91',             // Production VM (HTTPS)
   ].filter(Boolean);
 
   // Allow matching origins, *.vercel.app previews, or no-origin requests (curl etc.)

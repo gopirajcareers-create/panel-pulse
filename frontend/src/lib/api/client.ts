@@ -87,7 +87,11 @@ apiClient.interceptors.response.use(
       else if (statusCode === 500) toast.error('Server error. Please try again later.');
       else if (statusCode !== 429) toast.error(message);
     } else if (error.request) {
-      toast.error('Network error. Check your connection.');
+      // Suppress network error toast for background auth session checks — expected to fail on login page
+      const url: string = config?.url || '';
+      if (!url.includes('/auth/me')) {
+        toast.error('Network error. Check your connection.');
+      }
     }
 
     return Promise.reject(error);
