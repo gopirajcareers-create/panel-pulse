@@ -10,6 +10,9 @@ let API_BASE_URL: string = _envUrl !== undefined ? _envUrl : 'http://localhost:3
 // Force local backend when running on localhost (dev mode)
 if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
   API_BASE_URL = 'http://localhost:3000';
+} else if (typeof window !== 'undefined' && API_BASE_URL.startsWith('http://') && window.location.protocol === 'https:') {
+  // Never downgrade to HTTP when the page is served over HTTPS (prevents mixed-content blocks)
+  API_BASE_URL = API_BASE_URL.replace('http://', 'https://');
 }
 
 export { API_BASE_URL };

@@ -2,10 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { API_BASE_URL } from '@/lib/api/client';
 import { ParticleBackground } from '@/components/ui/ParticleBackground';
-
-const SSO_BASE = API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 
 const SSO_ERROR_MESSAGES: Record<string, string> = {
   sso_denied: 'Sign-in was cancelled or denied.',
@@ -57,7 +54,7 @@ export default function LoginPage() {
         <div className="flex flex-col gap-4 w-full items-center">
           {/* Main Auth */}
           <a
-            href={`${SSO_BASE}/api/v1/auth/azure/login`}
+            href="/api/v1/auth/azure/login"
             className="inline-flex items-center justify-center gap-3 bg-[#E8641F] hover:bg-[#D65F1A] text-white font-semibold text-base px-10 py-3.5 rounded-full shadow-lg shadow-orange-600/40 transition-all duration-200 hover:shadow-orange-600/60 hover:scale-[1.03] active:scale-[0.98] w-full max-w-[280px]"
           >
             Sign In
