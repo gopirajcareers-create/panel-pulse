@@ -296,7 +296,7 @@ export function NameExtractForm() {
 
         <div className="flex flex-col gap-3 py-1">
           <div className="text-xs text-text-muted">
-            <span className="font-bold text-primary">Note:</span> 1st run the jd and click the copy button and they try to run l1 and l2 After extraction is completed for all three files, the Evaluate button will mysteriously appear below!
+            <span className="font-bold text-primary">Note:</span> First run the JD and click on the copy button and then try to run L1 and L2 files. After extraction is completed for all three files, the Evaluate button will appear below. Click on the Evaluate button to start the panel evaluation.
           </div>
         </div>
 

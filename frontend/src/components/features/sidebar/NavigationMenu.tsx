@@ -39,10 +39,10 @@ const navItems: NavItem[] = [
     description: 'Ask the AI',
   },
   {
-    id: 'name-extract',
+    id: 'smart-evaluate',
     icon: <FileSearch className="w-5 h-5" />,
     label: 'Smart Extract',
-    path: '/name-extract',
+    path: '/smart-evaluate',
     description: 'Extract & evaluate',
   },
 ];
