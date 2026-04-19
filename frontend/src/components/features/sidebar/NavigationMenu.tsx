@@ -7,6 +7,7 @@ interface NavItem {
   label: string;
   path: string;
   description: string;
+  hidden?: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -18,11 +19,19 @@ const navItems: NavItem[] = [
     description: 'View analytics',
   },
   {
+    id: 'smart-evaluate',
+    icon: <FileSearch className="w-5 h-5" />,
+    label: 'Smart Evaluate',
+    path: '/smart-evaluate',
+    description: 'Extract & evaluate',
+  },
+  {
     id: 'evaluate',
     icon: <Upload className="w-5 h-5" />,
     label: 'Evaluate',
     path: '/evaluate',
     description: 'Upload & score',
+    hidden: true,
   },
   {
     id: 'panels',
@@ -38,13 +47,6 @@ const navItems: NavItem[] = [
     path: '/chat',
     description: 'Ask the AI',
   },
-  {
-    id: 'smart-evaluate',
-    icon: <FileSearch className="w-5 h-5" />,
-    label: 'Smart Extract',
-    path: '/smart-evaluate',
-    description: 'Extract & evaluate',
-  },
 ];
 
 export function NavigationMenu() {
@@ -54,7 +56,7 @@ export function NavigationMenu() {
   return (
     <div className="space-y-2">
       <p className="text-xs font-medium uppercase tracking-widest text-text-muted px-1 mb-3">Navigation</p>
-      {navItems.map((item) => {
+      {navItems.filter(item => !item.hidden).map((item) => {
         const isActive = location.pathname === item.path;
         return (
           <button
