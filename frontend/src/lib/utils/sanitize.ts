@@ -1,15 +1,13 @@
-// Remove HTML tags and then escape remaining text to avoid XSS
+// Strip HTML tags and decode any HTML entities — output is plain text for React rendering
 export function sanitizeText(input: string): string {
   if (!input) return '';
-  // Strip any HTML tags first
   const withoutTags = String(input).replace(/<[^>]*>/g, '');
-  // Escape remaining special characters
   return withoutTags
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
+    .replace(/&#039;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
     .trim();
 }
 
