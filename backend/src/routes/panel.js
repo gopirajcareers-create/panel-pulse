@@ -621,6 +621,25 @@ router.get('/evaluation/:id', async (req, res) => {
       });
     }
 
+    const unescapeHtml = (str) => {
+      if (typeof str !== 'string') return str;
+      return str
+        .replace(/&#039;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>');
+    };
+
+    const cleanEvidence = (ev) => {
+      if (!ev || typeof ev !== 'object') return ev;
+      const result = {};
+      for (const [k, v] of Object.entries(ev)) {
+        result[k] = Array.isArray(v) ? v.map(unescapeHtml) : unescapeHtml(v);
+      }
+      return result;
+    };
+
     return res.status(200).json({
       success: true,
       data: {
@@ -630,7 +649,7 @@ router.get('/evaluation/:id', async (req, res) => {
         score: evaluation.score,
         confidence: evaluation.confidence,
         categories: evaluation.categories,
-        evidence: evaluation.evidence,
+        evidence: cleanEvidence(evaluation.evidence),
         l2Validation: evaluation.l2_validation,
         l2RejectionReasons: evaluation.l2_rejection_reasons || [],
         l1Transcript: evaluation.l1_transcript || '',
