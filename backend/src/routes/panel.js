@@ -7,6 +7,16 @@
 const express = require('express');
 const router = express.Router();
 const { performPanelEvaluation, validateL2Rejection, PANEL_DIMENSIONS } = require('../services/panelEvaluationService');
+const { randomUUID } = require('crypto');
+
+// In-memory job store for async evaluation jobs (cleaned up after 30 min)
+const jobStore = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [id, job] of jobStore.entries()) {
+    if (job.createdAt < cutoff) jobStore.delete(id);
+  }
+}, 5 * 60 * 1000);
 
 /**
  * GET /api/v1/panel/check-existing
@@ -124,42 +134,42 @@ router.post('/score', async (req, res) => {
       });
     }
 
-    // No existing evaluation, proceed with LLM call
-    // Perform evaluation
-    const result = await performPanelEvaluation({
-      job_id,
-      panel_name,
-      candidate_name,
-      jd,
-      l1_transcripts,
-      l2_rejection_reasons,
-      panel_member_id,
-      panel_member_email
-    });
+    // Kick off async evaluation and return a job ID immediately
+    const asyncJobId = randomUUID();
+    jobStore.set(asyncJobId, { status: 'processing', createdAt: Date.now() });
 
-    if (!result.success) {
-      if (result.error_code === 429) {
-        return res.status(429).json(result);
-      }
-      return res.status(503).json(result);
-    }
+    performPanelEvaluation({ job_id, panel_name, candidate_name, jd, l1_transcripts, l2_rejection_reasons, panel_member_id, panel_member_email })
+      .then(result => {
+        if (!result.success) {
+          jobStore.set(asyncJobId, { status: 'failed', error: result.error, error_code: result.error_code, createdAt: Date.now() });
+          return;
+        }
+        jobStore.set(asyncJobId, {
+          status: 'complete',
+          createdAt: Date.now(),
+          data: {
+            success: true,
+            job_id,
+            is_cached: false,
+            panel_score: result.evaluation.score,
+            confidence: result.evaluation.confidence,
+            category_scores: result.evaluation.categories,
+            probing_verdict: result.evaluation.probing_verdict,
+            evidence_count: result.evaluation.evidence.length,
+            l2_validation: result.evaluation.l2_validation,
+            refined_jd: result.refined_jd,
+            panel_summary: result.panel_summary,
+            gap_analysis: result.gap_analysis,
+            full_evaluation: result.evaluation,
+            timestamp: result.timestamp
+          }
+        });
+      })
+      .catch(err => {
+        jobStore.set(asyncJobId, { status: 'failed', error: err.message, createdAt: Date.now() });
+      });
 
-    return res.status(200).json({
-      success: true,
-      job_id,
-      is_cached: false,
-      panel_score: result.evaluation.score,
-      confidence: result.evaluation.confidence,
-      category_scores: result.evaluation.categories,
-      probing_verdict: result.evaluation.probing_verdict,
-      evidence_count: result.evaluation.evidence.length,
-      l2_validation: result.evaluation.l2_validation,
-      refined_jd: result.refined_jd,
-      panel_summary: result.panel_summary,
-      gap_analysis: result.gap_analysis,
-      full_evaluation: result.evaluation,
-      timestamp: result.timestamp
-    });
+    return res.status(202).json({ success: true, async_job_id: asyncJobId, status: 'processing' });
   } catch (error) {
     console.error('Error in /score endpoint:', error);
     return res.status(500).json({
@@ -169,6 +179,20 @@ router.post('/score', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   }
+});
+
+/**
+ * GET /api/v1/panel/score/job/:jobId
+ * Poll for async evaluation result
+ */
+router.get('/score/job/:jobId', (req, res) => {
+  const job = jobStore.get(req.params.jobId);
+  if (!job) return res.status(404).json({ success: false, error: 'Job not found' });
+  if (job.status === 'processing') return res.status(202).json({ success: true, status: 'processing' });
+  if (job.status === 'failed') {
+    return res.status(job.error_code === 429 ? 429 : 503).json({ success: false, status: 'failed', error: job.error });
+  }
+  return res.status(200).json({ ...job.data, status: 'complete' });
 });
 
 /**

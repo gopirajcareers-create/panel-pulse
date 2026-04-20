@@ -80,7 +80,6 @@ export const panelApi = {
   },
 
   async scorePanel(data: UploadRequest): Promise<PanelEfficiencyScore> {
-    // Adapt UploadRequest -> backend expected shape
     const body = {
       job_id: data.jobId,
       panel_name: data.panelName,
@@ -93,22 +92,43 @@ export const panelApi = {
     };
 
     try {
-      const response = await apiClient.post('/api/v1/panel/score', body, {
-        timeout: 360000, // 6 min — runs L2 validation + scoring + gap analysis + JD refine + summary
-      });
-      const result = mapBackendToPanelScore(response.data, data);
-      // Add cached indicator to result
-      if (response.data?.is_cached) {
+      // POST returns immediately with a job ID (202) — no long-held connection
+      const startResp = await apiClient.post('/api/v1/panel/score', body, { timeout: 15000 });
+
+      // Cached result returned synchronously
+      if (startResp.data?.is_cached) {
+        const result = mapBackendToPanelScore(startResp.data, data);
         (result as any).isCached = true;
-        (result as any).cachedMessage = response.data.cached_message;
+        (result as any).cachedMessage = startResp.data.cached_message;
+        return result;
       }
-      return result;
+
+      const jobId = startResp.data?.async_job_id;
+      if (!jobId) throw new Error('No job ID returned from evaluation service');
+
+      // Poll until complete (max 10 min, every 4s)
+      const MAX_POLLS = 150;
+      for (let i = 0; i < MAX_POLLS; i++) {
+        await new Promise(res => setTimeout(res, 4000));
+        const pollResp = await apiClient.get(`/api/v1/panel/score/job/${jobId}`, { timeout: 10000 });
+        const pollData = pollResp.data;
+
+        if (pollData?.status === 'processing') continue;
+
+        if (pollData?.status === 'failed' || !pollData?.success) {
+          if (pollResp.status === 429) throw new Error('Scoring service temporarily unavailable due to rate limits. Please try again in a moment.');
+          throw new Error(pollData?.error || 'Evaluation failed');
+        }
+
+        if (pollData?.status === 'complete') {
+          return mapBackendToPanelScore(pollData, data);
+        }
+      }
+
+      throw new Error('Evaluation timed out — please try again');
     } catch (err: any) {
       const status = err?.response?.status;
-      if (status === 429) {
-        throw new Error('Scoring service temporarily unavailable due to rate limits. Please try again in a moment.');
-      }
-      // Bubble up other errors
+      if (status === 429) throw new Error('Scoring service temporarily unavailable due to rate limits. Please try again in a moment.');
       throw err;
     }
   },
