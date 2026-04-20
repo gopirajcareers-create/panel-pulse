@@ -57,7 +57,8 @@ async function callLLM(userPrompt, systemPrompt, maxTokens = 600) {
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt }
   ];
-  return llmClient.callLLM(messages, { temperature: 0.1, maxTokens });
+  // think:false disables qwen3 reasoning tokens at the Ollama API level
+  return llmClient.callLLM(messages, { temperature: 0.1, maxTokens, think: false });
 }
 
 /**
@@ -74,7 +75,7 @@ async function extractJD(text, jobId) {
  * Extract L1 Transcript data
  */
 async function extractL1(text, jobId, panelName = '', candidateName = '', panelMemberId = '', panelMemberEmail = '', jdText = '') {
-  const systemPrompt = "/no_think\nYou are an interview transcript parser. Return ONLY valid JSON. Ensure all strings are JSON-safe (no raw newlines inside values; use \\n instead).";
+  const systemPrompt = "You are an interview transcript parser. Return ONLY valid JSON. Ensure all strings are JSON-safe (no raw newlines inside values; use \\n instead).";
   const context = `
 PANEL NAME TO LOOK FOR: ${panelName || 'any'}
 CANDIDATE NAME TO LOOK FOR: ${candidateName || 'any'}
@@ -82,7 +83,8 @@ PANEL MEMBER ID: ${panelMemberId || 'N/A'}
 PANEL MEMBER EMAIL: ${panelMemberEmail || 'N/A'}
 `;
 
-  const userPrompt = `Extract interview metadata from the transcript below.
+  const userPrompt = `/no_think
+Extract interview metadata from the transcript below.
 Return a JSON object exactly matching this schema:
 {
   "Candidate Name": "${candidateName || 'extract from text'}",
@@ -101,7 +103,7 @@ ${text.substring(0, 4000)}`;
 
 
   console.log(`[Extraction] Calling LLM for L1 metadata (JobId: ${jobId})...`);
-  const response = await callLLM(userPrompt, systemPrompt, 600);
+  const response = await callLLM(userPrompt, systemPrompt, 800);
   console.log(`[Extraction] LLM Response:`, response);
   
   const metadata = parseJSONSafely(response);
@@ -126,8 +128,9 @@ ${text.substring(0, 4000)}`;
  * Extract L2 Rejection data
  */
 async function extractL2(text, jobId, panelName = '', candidateName = '', panelMemberId = '', panelMemberEmail = '', jdText = '') {
-  const systemPrompt = "/no_think\nYou are an L2 rejection reason parser. Return ONLY valid JSON. Ensure all strings are JSON-safe (no raw newlines inside values; use \\n instead).";
-  const userPrompt = `From the document below, extract the rejection details ONLY for the candidate: "${candidateName || 'the relevant candidate'}".
+  const systemPrompt = "You are an L2 rejection reason parser. Return ONLY valid JSON. Ensure all strings are JSON-safe (no raw newlines inside values; use \\n instead).";
+  const userPrompt = `/no_think
+From the document below, extract the rejection details ONLY for the candidate: "${candidateName || 'the relevant candidate'}".
 Note: The source document likely has a column named "L2 Feedback" — extract its content into the "L2 Rejected Reason" field.
 
 Return a JSON object exactly matching this schema:

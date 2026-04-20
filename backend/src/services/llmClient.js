@@ -46,7 +46,7 @@ if (!PROVIDER) {
  * @param {number} [opts.maxTokens=2000]
  * @returns {Promise<string>} Cleaned response text (<think> blocks stripped)
  */
-async function callLLM(messages, { temperature = 0.2, maxTokens = 2000 } = {}) {
+async function callLLM(messages, { temperature = 0.2, maxTokens = 2000, think = true } = {}) {
   const provider = _getProvider();
 
   if (!provider) {
@@ -59,7 +59,7 @@ async function callLLM(messages, { temperature = 0.2, maxTokens = 2000 } = {}) {
     apiUrl  = `${OLLAMA_BASE}/api/chat`;
     model   = OLLAMA_MODEL;
     headers = { 'Content-Type': 'application/json' };
-    body    = { model, messages, stream: false, options: { temperature, num_predict: maxTokens } };
+    body    = { model, messages, stream: false, options: { temperature, num_predict: maxTokens }, think };
     timeout = 180000;
   } else if (provider === 'groq') {
     apiUrl  = 'https://api.groq.com/openai/v1/chat/completions';
