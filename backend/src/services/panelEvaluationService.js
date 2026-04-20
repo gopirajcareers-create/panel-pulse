@@ -118,22 +118,8 @@ async function performPanelEvaluation(input) {
       throw new Error('l1_transcripts must be an array of strings');
     }
 
-    let forcedL2Verdict = '';
-    
-    // Enforce Probing Depth Locking: Run L2 Validation first to determine the exact verdict
-    if (l2_rejection_reasons && l2_rejection_reasons.length > 0 && l2_rejection_reasons[0] && l2_rejection_reasons[0] !== 'N/A') {
-      try {
-        const l2Res = await validateL2Rejection({ job_id, l2_reason: l2_rejection_reasons[0], l1_transcripts });
-        if (l2Res && l2Res.success && l2Res.validation && l2Res.validation.probing_verdict) {
-          forcedL2Verdict = l2Res.validation.probing_verdict;
-        }
-      } catch (err) {
-        console.warn('Could not pre-calculate L2 validation for scoring alignment:', err.message);
-      }
-    }
-
-    // Build the evaluation prompt, injecting the strict verdict
-    const userPrompt = _buildPanelScoringPrompt(job_id, jd, l1_transcripts, l2_rejection_reasons, forcedL2Verdict);
+    // Build the evaluation prompt — scorer self-derives the L2 probing verdict in a single pass
+    const userPrompt = _buildPanelScoringPrompt(job_id, jd, l1_transcripts, l2_rejection_reasons);
 
     // Call LLM
     const groqResponse = await _callGroqWithRetry(userPrompt, PANEL_SCORING_SYSTEM_PROMPT);
@@ -141,14 +127,13 @@ async function performPanelEvaluation(input) {
     // Parse and validate response
     const evaluation = _parseAndValidatePanelScore(groqResponse, job_id);
 
-    // 5 & 6. Generate Gap Analysis first (as it's used in the main summary)
-    const gapAnalysis = await _generateGapAnalysis(evaluation, jd, l2_rejection_reasons);
-
-    // Generate refined JD and detailed panel summary in parallel
-    const [refinedJd, panelSummary] = await Promise.all([
+    // Gap analysis and refined JD are independent — run in parallel, then generate summary
+    const [gapAnalysis, refinedJd] = await Promise.all([
+      _generateGapAnalysis(evaluation, jd, l2_rejection_reasons),
       _generateRefinedJD(jd),
-      _generatePanelSummary(evaluation, jd, l2_rejection_reasons, gapAnalysis),
     ]);
+
+    const panelSummary = await _generatePanelSummary(evaluation, jd, l2_rejection_reasons, gapAnalysis);
 
     evaluation.panel_summary = panelSummary;
     evaluation.gap_analysis = gapAnalysis;
@@ -241,17 +226,15 @@ async function validateL2Rejection(input) {
  * 
  * @private
  */
-function _buildPanelScoringPrompt(job_id, jd, l1_transcripts, l2_rejection_reasons, forcedL2Verdict = '') {
+function _buildPanelScoringPrompt(job_id, jd, l1_transcripts, l2_rejection_reasons) {
   const transcriptText = l1_transcripts.map((t, i) => `Transcript ${i + 1}:\n${t}`).join('\n\n');
   const reasonsText = l2_rejection_reasons.length > 0
     ? `\n\nL2 Rejection Reasons:\n${l2_rejection_reasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}`
     : '';
 
-  const alignmentRuleIntro = forcedL2Verdict 
-    ? `CRITICAL SCORING RULE:\nAn independent AI analysis has established the Probing Depth verdict for this interview is: **${forcedL2Verdict}**.\nYou MUST assign the "Rejection Validation Alignment" score in exact accordance with this verdict:`
-    : reasonsText.length === 0 
-      ? `For "Rejection Validation Alignment": Since this candidate was SELECTED (no rejection reasons), score this dimension based on how thoroughly the panel member validated the candidate's key strengths and mandatory skills to confirm they are indeed a top-tier hire.`
-      : `For "Rejection Validation Alignment", assign a precise decimal score based on the Probing Depth verdict:`;
+  const alignmentRuleIntro = reasonsText.length === 0
+    ? `For "Rejection Validation Alignment": Since this candidate was SELECTED (no rejection reasons), score this dimension based on how thoroughly the panel member validated the candidate's key strengths and mandatory skills to confirm they are indeed a top-tier hire.`
+    : `For "Rejection Validation Alignment": First, independently determine the Probing Depth verdict (NO_PROBING / SURFACE_PROBING / DEEP_PROBING) by scanning the transcript for evidence of the panel probing the L2 rejection reasons listed above. Then score this dimension strictly using that self-derived verdict:`;
 
   return `You are evaluating PANEL EFFICIENCY — how well the INTERVIEWER/PANEL probed the candidate.
 Focus on the INTERVIEWER's questions and probing depth, NOT the candidate's answers.
