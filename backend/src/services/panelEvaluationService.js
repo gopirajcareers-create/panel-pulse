@@ -118,22 +118,42 @@ async function performPanelEvaluation(input) {
       throw new Error('l1_transcripts must be an array of strings');
     }
 
-    // Build the evaluation prompt — scorer self-derives the L2 probing verdict in a single pass
+    const hasL2 = l2_rejection_reasons && l2_rejection_reasons.length > 0
+      && l2_rejection_reasons[0] && l2_rejection_reasons[0] !== 'N/A';
+
     const userPrompt = _buildPanelScoringPrompt(job_id, jd, l1_transcripts, l2_rejection_reasons);
 
-    // Call LLM
-    const groqResponse = await _callGroqWithRetry(userPrompt, PANEL_SCORING_SYSTEM_PROMPT);
-
-    // Parse and validate response
-    const evaluation = _parseAndValidatePanelScore(groqResponse, job_id);
-
-    // Gap analysis and refined JD are independent — run in parallel, then generate summary
-    const [gapAnalysis, refinedJd] = await Promise.all([
-      _generateGapAnalysis(evaluation, jd, l2_rejection_reasons),
-      _generateRefinedJD(jd),
+    // L2 validation and panel scoring run in parallel — no sequential penalty
+    const [l2ValidationResult, groqResponse] = await Promise.all([
+      hasL2
+        ? validateL2Rejection({ job_id, l2_reason: l2_rejection_reasons[0], l1_transcripts }).catch(() => null)
+        : Promise.resolve(null),
+      _callGroqWithRetry(userPrompt, PANEL_SCORING_SYSTEM_PROMPT),
     ]);
 
-    const panelSummary = await _generatePanelSummary(evaluation, jd, l2_rejection_reasons, gapAnalysis);
+    const evaluation = _parseAndValidatePanelScore(groqResponse, job_id);
+
+    // Correct RVA score using the independent L2 verdict when the scorer got it wrong
+    if (l2ValidationResult?.success && l2ValidationResult?.validation?.probing_verdict) {
+      const verdict = l2ValidationResult.validation.probing_verdict;
+      const rva = evaluation.categories['Rejection Validation Alignment'];
+      if (verdict === 'DEEP_PROBING' && rva < 1.0) {
+        evaluation.categories['Rejection Validation Alignment'] = 1.8;
+      } else if (verdict === 'SURFACE_PROBING' && rva < 0.5) {
+        evaluation.categories['Rejection Validation Alignment'] = 0.8;
+      } else if (verdict === 'NO_PROBING' && rva > 1.0) {
+        evaluation.categories['Rejection Validation Alignment'] = 0.2;
+      }
+      const correctedSum = Object.values(evaluation.categories).reduce((s, v) => s + v, 0);
+      evaluation.score = Math.round(correctedSum * 10) / 10;
+    }
+
+    // Gap analysis, refined JD, and panel summary are all independent — run in parallel
+    const [gapAnalysis, refinedJd, panelSummary] = await Promise.all([
+      _generateGapAnalysis(evaluation, jd, l2_rejection_reasons),
+      _generateRefinedJD(jd),
+      _generatePanelSummary(evaluation, jd, l2_rejection_reasons, null),
+    ]);
 
     evaluation.panel_summary = panelSummary;
     evaluation.gap_analysis = gapAnalysis;

@@ -50,34 +50,24 @@ async function extractTextFromBuffer(buffer, mimetype) {
 
 /**
  * Call LLM to extract structured data
- * Reuses the logic from panelEvaluationService.js
  */
-async function callLLM(userPrompt, systemPrompt) {
+async function callLLM(userPrompt, systemPrompt, maxTokens = 600) {
   const llmClient = require('./llmClient');
   const messages = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt }
   ];
-  return llmClient.callLLM(messages, { temperature: 0.1, maxTokens: 2000 });
+  return llmClient.callLLM(messages, { temperature: 0.1, maxTokens });
 }
 
 /**
- * Extract JD data
+ * Extract JD data — no LLM needed, raw file text IS the JD
  */
 async function extractJD(text, jobId) {
-  const systemPrompt = "You are a JD parser. Return ONLY valid JSON. Ensure all strings are JSON-safe (no raw newlines inside values; use \\n instead).";
-  const userPrompt = `Extract the full Job Description text from the content below.
-Return a JSON object EXACTLY matching this schema:
-{
-  "Job Interview ID": "${jobId}",
-  "JD": "EXTRACT THE ACTUAL FULL ORIGINAL TEXT CONTENT OF THE JD HERE"
-}
-
-Content:
-${text}`;
-
-  const response = await callLLM(userPrompt, systemPrompt);
-  return parseJSONSafely(response);
+  return {
+    'Job Interview ID': jobId,
+    'JD': text.trim(),
+  };
 }
 
 /**
@@ -112,7 +102,7 @@ ${text.substring(0, 30000)}`;
 
 
   console.log(`[Extraction] Calling LLM for L1 metadata (JobId: ${jobId})...`);
-  const response = await callLLM(userPrompt, systemPrompt);
+  const response = await callLLM(userPrompt, systemPrompt, 600);
   console.log(`[Extraction] LLM Response:`, response);
   
   const metadata = parseJSONSafely(response);
@@ -160,7 +150,7 @@ Content (first 8000 chars):
 ${text.substring(0, 8000)}`;
 
   console.log(`[Extraction] Calling LLM for L2 specific extraction (JobId: ${jobId}, Candidate: ${candidateName})...`);
-  const response = await callLLM(userPrompt, systemPrompt);
+  const response = await callLLM(userPrompt, systemPrompt, 400);
   console.log(`[Extraction] LLM Response:`, response);
 
   const metadata = parseJSONSafely(response);

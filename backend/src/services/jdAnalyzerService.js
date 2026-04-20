@@ -129,8 +129,8 @@ async function _callGroqWithRetry(userPrompt) {
  */
 function _parseAnalysisResponse(response) {
   try {
-    const mandatorySkillsMatch = response.match(/Mandatory Skills:\s*([\s\S]*?)(?=Good To Have Skills:|Good to have Skills:|AI Suggested Skills:|$)/i);
-    const goodToHaveMatch = response.match(/Good To Have Skills:|Good to have Skills:\s*([\s\S]*?)(?=AI Suggested Skills:|$)/i);
+    const mandatorySkillsMatch = response.match(/Mandatory Skills:\s*([\s\S]*?)(?=Good\s*To\s*Have\s*Skills:|AI Suggested Skills:|$)/i);
+    const goodToHaveMatch = response.match(/Good\s*To\s*Have\s*Skills:\s*([\s\S]*?)(?=AI Suggested Skills:|$)/i);
     const aiSuggestedMatch = response.match(/AI Suggested Skills:\s*([\s\S]*?)$/i);
 
     const parseSkills = (text) => {
