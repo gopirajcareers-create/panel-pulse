@@ -84,6 +84,7 @@ PANEL MEMBER EMAIL: ${panelMemberEmail || 'N/A'}
 
   const userPrompt = `Extract interview metadata from the transcript below.
 Return a JSON object exactly matching this schema:
+{
   "Candidate Name": "${candidateName || 'extract from text'}",
   "role": "extract role if mentioned, else N/A",
   "panel_member_id": "${panelMemberId || 'extract if mentioned, else N/A'}",
@@ -93,11 +94,9 @@ Return a JSON object exactly matching this schema:
   "L1_decision": "extract 'Selected' or 'Rejected' if mentioned, else N/A"
 }
 
-
-
 ${context}
-Content (first 30000 chars):
-${text.substring(0, 30000)}`;
+Content (first 4000 chars):
+${text.substring(0, 4000)}`;
 
 
 
@@ -150,7 +149,7 @@ Content (first 8000 chars):
 ${text.substring(0, 8000)}`;
 
   console.log(`[Extraction] Calling LLM for L2 specific extraction (JobId: ${jobId}, Candidate: ${candidateName})...`);
-  const response = await callLLM(userPrompt, systemPrompt, 400);
+  const response = await callLLM(userPrompt, systemPrompt, 800);
   console.log(`[Extraction] LLM Response:`, response);
 
   const metadata = parseJSONSafely(response);
