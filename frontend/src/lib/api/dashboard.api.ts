@@ -197,6 +197,7 @@ export const dashboardApi = {
         categories: mappedCategories,
         evidence: mappedEvidence,
         l2Validation: body.l2Validation,
+        l2DetailedValidation: body.l2DetailedValidation ?? null,
         l2RejectionReasons: body.l2RejectionReasons ?? [],
         l1Transcript: body.l1Transcript || '',
         evaluatedAt: body.evaluatedAt ?? body.evaluated_at,

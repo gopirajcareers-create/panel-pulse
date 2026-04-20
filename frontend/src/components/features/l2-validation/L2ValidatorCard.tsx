@@ -10,6 +10,7 @@ interface Props {
   l2RejectionReason?: string;
   autoValidate?: boolean;
   jobId?: string;
+  preComputedValidation?: any;
 }
 
 /** Strip CSV header rows / ID prefixes and return only the clean rejection reason for the given jobId */
@@ -64,23 +65,39 @@ function cleanRejectionReason(raw: string, jobId?: string): string {
   return contentLines.join(' ').trim();
 }
 
+function transformPreComputed(raw: any) {
+  if (!raw) return null;
+  const verdictMap: Record<string, 'NO PROBING' | 'SURFACE PROBING' | 'DEEP PROBING'> = {
+    'NO PROBING': 'NO PROBING', 'SURFACE PROBING': 'SURFACE PROBING', 'DEEP PROBING': 'DEEP PROBING',
+    'NO_PROBING': 'NO PROBING', 'SURFACE_PROBING': 'SURFACE PROBING', 'DEEP_PROBING': 'DEEP PROBING',
+  };
+  const probingDepth = verdictMap[raw.probing_verdict] || 'NO PROBING';
+  const evidence = raw.evidence || [];
+  const matchedQuestions = Array.isArray(evidence) ? evidence.map((e: any) => e.quote || e).filter(Boolean) : [];
+  return { probingDepth, matchedQuestions, justifications: raw.justifications, validated: true, confidence: raw.confidence || 0.5 };
+}
+
 export function L2ValidatorCard({
   l1Transcript,
   l2RejectionReason = '',
   autoValidate = false,
   jobId,
+  preComputedValidation,
 }: Props) {
   const { result, isLoading, error, validateL2Reason } = useL2Validation();
 
   const cleanedReason = cleanRejectionReason(l2RejectionReason, jobId);
+  const preComputed = React.useMemo(() => transformPreComputed(preComputedValidation), [preComputedValidation]);
 
-  // Auto-validate once when both reason and transcript are available
+  // Only call the API if no pre-computed result is available
   useEffect(() => {
-    if (autoValidate && cleanedReason && l1Transcript?.trim() && !result && !isLoading) {
+    if (autoValidate && !preComputed && cleanedReason && l1Transcript?.trim() && !result && !isLoading) {
       validateL2Reason(l1Transcript, cleanedReason);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoValidate, cleanedReason, l1Transcript]);
+  }, [autoValidate, cleanedReason, l1Transcript, preComputed]);
+
+  const displayResult = preComputed || result;
 
   const [showTooltip, setShowTooltip] = React.useState(false);
 

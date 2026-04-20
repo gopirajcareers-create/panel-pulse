@@ -172,6 +172,7 @@ export default function ResultsPage() {
                 l2RejectionReason={displayL2Reasons[0]}
                 autoValidate={true}
                 jobId={displayJobId}
+                preComputedValidation={cachedEvaluation?.l2DetailedValidation ?? null}
               />
             </section>
           )}

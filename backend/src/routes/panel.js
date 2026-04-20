@@ -675,6 +675,7 @@ router.get('/evaluation/:id', async (req, res) => {
         categories: evaluation.categories,
         evidence: cleanEvidence(evaluation.evidence),
         l2Validation: evaluation.l2_validation,
+        l2DetailedValidation: evaluation.l2_detailed_validation || null,
         l2RejectionReasons: evaluation.l2_rejection_reasons || [],
         l1Transcript: evaluation.l1_transcript || '',
         refinedJd: evaluation.refined_jd || null,

@@ -172,6 +172,7 @@ async function performPanelEvaluation(input) {
       refined_jd: refinedJd,
       panel_summary: panelSummary,
       gap_analysis: gapAnalysis,
+      l2_detailed_validation: l2ValidationResult?.success ? l2ValidationResult.validation : null,
       panel_member_id,
       panel_member_email
     });
@@ -832,6 +833,7 @@ async function _storeEvaluationInDB(evaluationData) {
       categories: evaluationData.categories,
       evidence: evaluationData.evidence,
       l2_validation: evaluationData.l2_validation,
+      l2_detailed_validation: evaluationData.l2_detailed_validation || null,
       l2_rejection_reasons: evaluationData.l2_rejection_reasons || [],
       l1_transcript: evaluationData.l1_transcript || '',
       refined_jd: evaluationData.refined_jd || null,
