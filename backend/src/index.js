@@ -76,7 +76,7 @@ const port = PORT;
 async function start() {
   try {
     await connectToMongo();
-    app.listen(port, () => {
+    const server = app.listen(port, () => {
       console.log(`\n✅ Server running on http://localhost:${port}`);
       console.log(`📍 Environment: ${NODE_ENV}`);
       console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
@@ -86,6 +86,9 @@ async function start() {
       console.log(`🤖 LLM provider: ${_llmProvider}`);
       console.log(`🗄️  MongoDB URI set: ${!!process.env.MONGODB_URI}\n`);
     });
+    // Allow long-running LLM evaluation requests (up to 5 min)
+    server.timeout = 300000;
+    server.keepAliveTimeout = 305000;
   } catch (err) {
     console.error('❌ Failed to start server:', err);
     process.exit(1);

@@ -66,13 +66,13 @@ async function callLLM(messages, { temperature = 0.2, maxTokens = 2000 } = {}) {
     model   = GROQ_MODEL;
     headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` };
     body    = { model, messages, temperature, max_tokens: maxTokens, top_p: 1, stream: false };
-    timeout = 30000;
+    timeout = 90000;
   } else { // mistral
     apiUrl  = 'https://api.mistral.ai/v1/chat/completions';
     model   = MISTRAL_MODEL;
     headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${MISTRAL_API_KEY}` };
     body    = { model, messages, temperature, max_tokens: maxTokens, stream: false };
-    timeout = 30000;
+    timeout = 90000;
   }
 
   const response = await axios.post(apiUrl, body, { headers, timeout });
