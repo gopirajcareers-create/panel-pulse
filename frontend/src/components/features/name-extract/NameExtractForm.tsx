@@ -1,14 +1,12 @@
 import React, { useState } from 'react';
-import { 
-  FileText, 
-  Download, 
-  Upload, 
-  Loader2, 
-  Check, 
-  X, 
+import {
+  FileText,
+  Download,
+  Upload,
+  Loader2,
+  X,
   AlertCircle,
   FileCode,
-  Copy,
   Zap,
   Play
 } from 'lucide-react';
@@ -101,6 +99,10 @@ export function NameExtractForm() {
             fileName: `${type.toUpperCase()}_${jobId}.csv`
           }
         }));
+        // Auto-populate JD text so L1/L2 extractions receive JD context automatically
+        if (type === 'jd' && response.data.data?.JD) {
+          setJdText(String(response.data.data.JD));
+        }
       } else {
         setError(response.data.error || 'Extraction failed');
       }
@@ -281,23 +283,9 @@ export function NameExtractForm() {
           </div>
         </div>
 
-        {/* JD Text Input (Used for L1/L2 extraction if provided) */}
-        <div className="bg-white/[0.01] p-4 rounded-lg border border-white/5">
-          <label className="block text-xs font-semibold uppercase tracking-widest text-text-muted mb-2">
-            Extracted JD Text (Copy from JD Extract below and paste here to use for L1/L2)
-          </label>
-          <textarea
-            value={jdText}
-            onChange={(e) => setJdText(e.target.value)}
-            placeholder="Paste extracted Job Description text here..."
-            className="w-full h-24 bg-white/[0.02] border border-white/10 rounded-lg px-4 py-2 text-sm text-text-primary focus:outline-none focus:border-primary/50 transition-colors resize-y"
-          />
-        </div>
-
-        <div className="flex flex-col gap-3 py-1">
-          <div className="text-xs text-text-muted">
-            <span className="font-bold text-primary">Note:</span> First run the JD and click on the copy button and then try to run L1 and L2 files. After extraction is completed for all three files, the Evaluate button will appear below. Click on the Evaluate button to start the panel evaluation.
-          </div>
+        <div className="flex items-center gap-2 text-xs text-text-muted italic border-l-2 border-primary/30 pl-3">
+          <Zap className="w-3 h-3 text-primary shrink-0" />
+          <span className="font-semibold text-primary">Extract JD first — its content is automatically passed to L1 &amp; L2. Once all three are extracted, the Evaluate button will appear.</span>
         </div>
 
         {error && (
@@ -319,45 +307,6 @@ export function NameExtractForm() {
             loading={loading.jd}
             result={results.jd}
             onDownload={() => results.jd && downloadCSV(results.jd)}
-            onCopy={() => {
-              if (results.jd?.data?.JD) {
-                const textToCopy = String(results.jd.data.JD);
-                const fallbackCopy = () => {
-                  const textArea = document.createElement("textarea");
-                  textArea.value = textToCopy;
-                  textArea.style.position = "fixed";
-                  textArea.style.top = "0";
-                  textArea.style.left = "0";
-                  textArea.style.width = "2em";
-                  textArea.style.height = "2em";
-                  textArea.style.padding = "0";
-                  textArea.style.border = "none";
-                  textArea.style.outline = "none";
-                  textArea.style.boxShadow = "none";
-                  textArea.style.background = "transparent";
-                  document.body.appendChild(textArea);
-                  textArea.focus();
-                  textArea.select();
-                  try {
-                    document.execCommand('copy');
-                  } catch (err) {
-                    console.error('Fallback copy failed', err);
-                  }
-                  document.body.removeChild(textArea);
-                };
-
-                if (navigator.clipboard && window.isSecureContext) {
-                  navigator.clipboard.writeText(textToCopy).catch((err) => {
-                    console.warn("Modern copy failed, trying fallback...", err);
-                    fallbackCopy();
-                  });
-                } else {
-                  fallbackCopy();
-                }
-                
-                setJdText(textToCopy);
-              }
-            }}
             accentColor="indigo"
           />
           <ExtractionCard
@@ -461,7 +410,6 @@ interface ExtractionCardProps {
   loading: boolean;
   result: ExtractionResult | null;
   onDownload: () => void;
-  onCopy?: () => void;
   accentColor: 'indigo' | 'orange' | 'emerald';
 }
 
@@ -475,7 +423,6 @@ function ExtractionCard({
   loading,
   result,
   onDownload,
-  onCopy,
   accentColor
 }: ExtractionCardProps) {
   const accentClasses = {
@@ -515,7 +462,7 @@ function ExtractionCard({
             <button
               onClick={onExtract}
               disabled={loading}
-              className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium bg-white/5 border border-white/10 hover:bg-white/10 transition-colors disabled:opacity-50`}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium bg-white/5 border border-white/10 hover:bg-white/10 transition-colors disabled:opacity-50"
             >
               {loading ? (
                 <>
@@ -530,28 +477,14 @@ function ExtractionCard({
               )}
             </button>
           ) : (
-            <div className="flex flex-col gap-2">
-              <div className="flex gap-2">
-                <button
-                  onClick={onDownload}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
-                  title="Download CSV"
-                >
-                  <Download className="w-4 h-4" />
-                  CSV
-                </button>
-                {onCopy && (
-                  <button
-                    onClick={onCopy}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/30 transition-colors"
-                    title="Copy text & use in L1/L2"
-                  >
-                    <Copy className="w-4 h-4" />
-                    Copy
-                  </button>
-                )}
-              </div>
-            </div>
+            <button
+              onClick={onDownload}
+              className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 transition-colors"
+              title="Download CSV"
+            >
+              <Download className="w-4 h-4" />
+              Download CSV
+            </button>
           )}
         </div>
       )}
