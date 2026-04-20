@@ -223,7 +223,7 @@ async function validateL2Rejection(input) {
     const userPrompt = _buildL2ValidationPrompt(job_id, l2_reason, l1_transcripts);
 
     // Call LLM
-    const groqResponse = await _callGroqWithRetry(userPrompt, L2_VALIDATION_SYSTEM_PROMPT);
+    const groqResponse = await _callGroqWithRetry(userPrompt, L2_VALIDATION_SYSTEM_PROMPT, 1000);
 
     // Parse response
     const validation = _parseL2ValidationResponse(groqResponse);
@@ -250,8 +250,13 @@ async function validateL2Rejection(input) {
  * 
  * @private
  */
+const MAX_TRANSCRIPT_CHARS = 14000;
+
 function _buildPanelScoringPrompt(job_id, jd, l1_transcripts, l2_rejection_reasons) {
-  const transcriptText = l1_transcripts.map((t, i) => `Transcript ${i + 1}:\n${t}`).join('\n\n');
+  const full = l1_transcripts.map((t, i) => `Transcript ${i + 1}:\n${t}`).join('\n\n');
+  const transcriptText = full.length > MAX_TRANSCRIPT_CHARS
+    ? full.substring(0, MAX_TRANSCRIPT_CHARS) + '\n[... transcript truncated for scoring ...]'
+    : full;
   const reasonsText = l2_rejection_reasons.length > 0
     ? `\n\nL2 Rejection Reasons:\n${l2_rejection_reasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}`
     : '';
@@ -260,7 +265,8 @@ function _buildPanelScoringPrompt(job_id, jd, l1_transcripts, l2_rejection_reaso
     ? `For "Rejection Validation Alignment": Since this candidate was SELECTED (no rejection reasons), score this dimension based on how thoroughly the panel member validated the candidate's key strengths and mandatory skills to confirm they are indeed a top-tier hire.`
     : `For "Rejection Validation Alignment": First, independently determine the Probing Depth verdict (NO_PROBING / SURFACE_PROBING / DEEP_PROBING) by scanning the transcript for evidence of the panel probing the L2 rejection reasons listed above. Then score this dimension strictly using that self-derived verdict:`;
 
-  return `You are evaluating PANEL EFFICIENCY — how well the INTERVIEWER/PANEL probed the candidate.
+  return `/no_think
+You are evaluating PANEL EFFICIENCY — how well the INTERVIEWER/PANEL probed the candidate.
 Focus on the INTERVIEWER's questions and probing depth, NOT the candidate's answers.
 
 Job ID: ${job_id}
@@ -325,9 +331,13 @@ IMPORTANT:
  * @private
  */
 function _buildL2ValidationPrompt(job_id, l2_reason, l1_transcripts) {
-  const transcriptText = l1_transcripts.map((t, i) => `Transcript ${i + 1}:\n${t}`).join('\n\n');
+  const full = l1_transcripts.map((t, i) => `Transcript ${i + 1}:\n${t}`).join('\n\n');
+  const transcriptText = full.length > MAX_TRANSCRIPT_CHARS
+    ? full.substring(0, MAX_TRANSCRIPT_CHARS) + '\n[... transcript truncated for L2 validation ...]'
+    : full;
 
-  return `Validate this L2 rejection reason against L1 transcripts.
+  return `/no_think
+Validate this L2 rejection reason against L1 transcripts.
 
 Job ID: ${job_id}
 L2 Rejection Reason: ${l2_reason}
@@ -360,14 +370,14 @@ Return a JSON object with:
  *
  * @private
  */
-async function _callGroqWithRetry(userPrompt, systemPrompt) {
+async function _callGroqWithRetry(userPrompt, systemPrompt, maxTokens = 1500) {
   const { callLLM, getProvider } = require('./llmClient');
   const messages = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: userPrompt }
   ];
   try {
-    return await callLLM(messages, { temperature: 0.2, maxTokens: 2000 });
+    return await callLLM(messages, { temperature: 0.2, maxTokens, think: false });
   } catch (error) {
     const provider = getProvider() || 'LLM';
     const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
@@ -601,7 +611,7 @@ Output ONLY the JSON object, nothing else.
 
 Job Description:
 ${jd}`;
-    rawContent = await _callGroqWithRetry(userPrompt, JD_REFINE_SYSTEM_PROMPT);
+    rawContent = await _callGroqWithRetry(userPrompt, JD_REFINE_SYSTEM_PROMPT, 600);
     
     // Aggressively strip thinking/reasoning blocks and preamble
     let clean = rawContent
@@ -754,7 +764,8 @@ async function _generatePanelSummary(evaluation, jd, l2_rejection_reasons = [], 
       ? `\nTop Identified Gaps Point:\n${gapAnalysis.split('\n')[0]}`
       : '';
 
-    const userPrompt = `Panel Evaluation Results:
+    const userPrompt = `/no_think
+Panel Evaluation Results:
 - Overall Score: ${evaluation.score} / ${MAX_PANEL_SCORE}
 - Score Category: ${scoreCategory}
 - Dimensions:
@@ -765,7 +776,7 @@ ${String(jd || '').substring(0, 400)}
 
 Generate a detailed, multi-point bulleted summary covering panel behavior, interview process quality, rejection validation effectiveness, and at least one identification gap.`;
 
-    const summary = await _callGroqWithRetry(userPrompt, PANEL_SUMMARY_SYSTEM_PROMPT);
+    const summary = await _callGroqWithRetry(userPrompt, PANEL_SUMMARY_SYSTEM_PROMPT, 1000);
     return summary.trim();
   } catch (err) {
     console.error('_generatePanelSummary error:', err.message);
@@ -790,7 +801,8 @@ async function _generateGapAnalysis(evaluation, jd, l2_rejection_reasons) {
       })
       .join('\n');
 
-    const userPrompt = `Analyse the GAPS in the panel member's interview probing.
+    const userPrompt = `/no_think
+Analyse the GAPS in the panel member's interview probing.
     
 Rejection Reasons Provided:
 ${l2_rejection_reasons.map(r => `- ${r}`).join('\n')}
@@ -806,7 +818,7 @@ ${JSON.stringify(evaluation.evidence || {}, null, 2)}
 
 Provide a bulleted list analyzing why the panel failed to probe deep enough to catch these rejection reasons earlier, and providing specific, friendly, and neat recommendations for the interviewer to improve. Tone MUST be professional and supportive for HR feedback.`;
 
-    const summary = await _callGroqWithRetry(userPrompt, GAP_ANALYSIS_SYSTEM_PROMPT);
+    const summary = await _callGroqWithRetry(userPrompt, GAP_ANALYSIS_SYSTEM_PROMPT, 600);
     return summary.trim();
   } catch (err) {
     console.error('_generateGapAnalysis error:', err.message);
