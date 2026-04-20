@@ -1,10 +1,10 @@
 import React from 'react';
-import { BookOpen, AlertCircle, CheckCircle, Star } from 'lucide-react';
+import { BookOpen, AlertCircle, CheckCircle, Lightbulb, AlertTriangle } from 'lucide-react';
 
 interface RefinedJd {
-  key_skills: string[];
-  mandatory_skills: string[];
-  good_to_have_skills: string[];
+  key_skills?: string[];
+  mandatory_skills?: string[];
+  good_to_have_skills?: string[];
   raw?: string;
 }
 
@@ -12,123 +12,123 @@ interface Props {
   refinedJd: RefinedJd | null;
 }
 
-interface SkillSectionProps {
-  title: string;
-  skills: string[];
-  icon: React.ReactNode;
-  color: string;
-  bgColor: string;
-  borderColor: string;
-}
+const SKILL_NOISE = [
+  'wait,', 'hmm,', 'i need', 'the user', 'so that', 'maybe', 'perhaps',
+  'actually', 'however', 'but the', 'deep understanding', 'experience with',
+  'the mention', 'this is', 'might struggle', 'another key', 'for the role',
+  'the candidate', 'the jd', 'the role', 'specific database', 'it is',
+  "it's", 'which', 'that is', 'let me', 'need to check', 'the rules',
+  'the example', 'inference', 'thinking about', "i'm", 'i think',
+  'so maybe', 'the panel', 'too.', "that's a", 'but wait',
+  'mandatory', 'also', 'required by', 'mentioned earlier', 'so those',
+  'go into', 'skills go', 'key_skills', 'all other', 'core skills',
+  'mandatory_skills', 'good_to_have_skills'
+];
 
-function SkillSection({ title, skills, icon, color, bgColor, borderColor }: SkillSectionProps) {
-  if (!skills || skills.length === 0) return null;
-
-  // Noise phrases that appear in AI reasoning but never in real skill names
-  const SKILL_NOISE = [
-    'wait,', 'hmm,', 'i need', 'the user', 'so that', 'maybe', 'perhaps',
-    'actually', 'however', 'but the', 'deep understanding', 'experience with',
-    'the mention', 'this is', 'might struggle', 'another key', 'for the role',
-    'the candidate', 'the jd', 'the role', 'specific database', 'it is',
-    "it's", 'which', 'that is', 'let me', 'need to check', 'the rules',
-    'the example', 'inference', 'thinking about', "i'm", 'i think',
-    'so maybe', 'the panel', 'too.', 'that\'s a', 'but wait',
-    'mandatory', 'also', 'required by', 'mentioned earlier', 'so those',
-    'go into', 'skills go', 'key_skills', 'all other', 'core skills',
-    'mandatory_skills', 'good_to_have_skills'
-  ];
-
-  // Clean common AI noise/looping if it leaks into the data
-  const cleanedSkills = skills
+function cleanSkills(skills: string[] | undefined): string[] {
+  if (!skills || skills.length === 0) return [];
+  return skills
     .map(s => s.trim())
     .filter(s => {
-      if (!s || s.length <= 1) return false;
-      // Skill names are short — but let's be more permissive (up to 80 chars)
-      if (s.length > 80) return false;
+      if (!s || s.length <= 1 || s.length > 80) return false;
       const l = s.toLowerCase();
-      // Reject lines containing any known AI-reasoning phrase
       if (SKILL_NOISE.some(p => l.includes(p))) return false;
-      // Reject lines that look like a whole paragraph (end with period + many words)
       if (s.endsWith('.') && s.trim().split(' ').length > 10) return false;
       return true;
     })
-    .map(s => s.replace(/[.,;:]+$/, '').trim()) // Strip trailing punctuation
+    .map(s => s.replace(/[.,;:]+$/, '').trim())
     .filter(s => s.length > 1);
-
-  if (cleanedSkills.length === 0) return null;
-
-  return (
-    <div className={`${bgColor} border ${borderColor} rounded-lg p-4`}>
-      <div className="flex items-center gap-2 mb-3">
-        <span className={color}>{icon}</span>
-        <h4 className={`text-xs font-semibold uppercase tracking-widest ${color}`}>{title}</h4>
-      </div>
-      <ul className="space-y-1.5">
-        {cleanedSkills.map((skill, i) => (
-          <li key={i} className="text-sm text-text-primary leading-snug flex gap-2">
-            <span className={`mt-0.5 shrink-0 ${color} opacity-60`}>•</span>
-            <span>{skill}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
 }
-
 
 export function JdSkillsCard({ refinedJd }: Props) {
   if (!refinedJd) return null;
 
-  const hasAny =
-    (refinedJd.key_skills?.length ?? 0) > 0 ||
-    (refinedJd.mandatory_skills?.length ?? 0) > 0 ||
-    (refinedJd.good_to_have_skills?.length ?? 0) > 0;
+  const mandatorySkills = cleanSkills(refinedJd.mandatory_skills);
+  const goodToHaveSkills = cleanSkills(refinedJd.good_to_have_skills);
+  const aiSuggestions = cleanSkills(refinedJd.key_skills).slice(0, 5);
 
+  const hasAny = mandatorySkills.length > 0 || goodToHaveSkills.length > 0 || aiSuggestions.length > 0;
   if (!hasAny && !refinedJd.raw) return null;
 
   return (
     <div className="bg-bg-card rounded-xl border border-white/[0.06] p-5 space-y-4">
-      {/* Header */}
       <div className="flex items-center gap-2">
         <BookOpen className="w-4 h-4 text-indigo-400" />
         <h3 className="text-base font-semibold text-text-primary">JD Skills Analysis</h3>
       </div>
 
       <div className="grid grid-cols-1 gap-3">
-        {hasAny ? (
-          <>
-            <SkillSection
-              title="Key Skills"
-              skills={refinedJd.key_skills}
-              icon={<Star className="w-3.5 h-3.5" />}
-              color="text-indigo-400"
-              bgColor="bg-indigo-500/5"
-              borderColor="border-indigo-500/20"
-            />
-            <SkillSection
-              title="Mandatory Skills"
-              skills={refinedJd.mandatory_skills}
-              icon={<AlertCircle className="w-3.5 h-3.5" />}
-              color="text-red-400"
-              bgColor="bg-red-500/5"
-              borderColor="border-red-500/20"
-            />
-            <SkillSection
-              title="Good to Have"
-              skills={refinedJd.good_to_have_skills}
-              icon={<CheckCircle className="w-3.5 h-3.5" />}
-              color="text-emerald-400"
-              bgColor="bg-emerald-500/5"
-              borderColor="border-emerald-500/20"
-            />
-          </>
-        ) : refinedJd.raw ? (
-          <div className="text-sm text-text-muted italic p-4 text-center border-2 border-dashed border-white/5 rounded-lg">
-            Skills could not be categorized for this JD. Please re-evaluate to refresh.
+        {/* Mandatory Skills */}
+        {mandatorySkills.length > 0 ? (
+          <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+              <h4 className="text-xs font-semibold uppercase tracking-widest text-red-400">Mandatory Skills</h4>
+            </div>
+            <ul className="space-y-1.5">
+              {mandatorySkills.map((skill, i) => (
+                <li key={i} className="text-sm text-text-primary leading-snug flex gap-2">
+                  <span className="mt-0.5 shrink-0 text-red-400 opacity-60">•</span>
+                  <span>{skill}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         ) : (
-          <div className="text-sm text-text-muted italic p-4 text-center border-2 border-dashed border-white/5 rounded-lg">
-            No specific skills extracted from JD
+          <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+              <h4 className="text-xs font-semibold uppercase tracking-widest text-red-400">Mandatory Skills</h4>
+            </div>
+            <div className="flex items-start gap-2 text-sm text-amber-400">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>No mandatory skill is mentioned in the JD — Please check with recruitment team.</span>
+            </div>
+            {aiSuggestions.length > 0 && (
+              <div className="mt-2 pt-3 border-t border-white/[0.06]">
+                <div className="flex items-center gap-2 mb-2">
+                  <Lightbulb className="w-3.5 h-3.5 text-indigo-400" />
+                  <span className="text-xs font-semibold uppercase tracking-widest text-indigo-400">Top {aiSuggestions.length} Mandatory Skills Suggestions from AI</span>
+                </div>
+                <ol className="space-y-1.5">
+                  {aiSuggestions.map((skill, i) => (
+                    <li key={i} className="text-sm text-text-primary leading-snug flex gap-2">
+                      <span className="shrink-0 text-indigo-400 opacity-70">{i + 1}.</span>
+                      <span>{skill}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Good to Have Skills */}
+        {goodToHaveSkills.length > 0 ? (
+          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+              <h4 className="text-xs font-semibold uppercase tracking-widest text-emerald-400">Good to Have</h4>
+            </div>
+            <ul className="space-y-1.5">
+              {goodToHaveSkills.map((skill, i) => (
+                <li key={i} className="text-sm text-text-primary leading-snug flex gap-2">
+                  <span className="mt-0.5 shrink-0 text-emerald-400 opacity-60">•</span>
+                  <span>{skill}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+              <h4 className="text-xs font-semibold uppercase tracking-widest text-emerald-400">Good to Have</h4>
+            </div>
+            <div className="flex items-start gap-2 text-sm text-amber-400">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>No skill is mentioned as Good to have skills for this job role — Please check with recruitment team.</span>
+            </div>
           </div>
         )}
       </div>

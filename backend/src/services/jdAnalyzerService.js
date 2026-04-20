@@ -10,29 +10,30 @@ const axios = require('axios');
 // System prompt for JD analysis
 const SYSTEM_PROMPT = `You are a Senior Recruitment Manager preparing to take an interview.
 
-Your task is to read through the JD and generate the list of key skills that needs to be evaluated as part of the interview.
+Your task is to read through the JD and generate the list of skills that needs to be evaluated as part of the interview.
 
 You must classify the skills as:
-- Key Skills - Core technical skills that define the role
-- Mandatory Skills - Non-negotiable skills; reject candidates lacking these
-- Good to have Skills - Nice-to-have but not critical for role success
+- Mandatory Skills - Skills EXPLICITLY labeled as mandatory/required in the JD; non-negotiable
+- Good to have Skills - Skills EXPLICITLY labeled as nice-to-have, preferred, or a plus
+- AI Suggested Skills - Top 5 skills YOU recommend as mandatory based on the job title and role context, even if not explicitly stated in the JD
 
 CRITICAL RULES:
-1. Do NOT assume intent
-2. Do NOT infer requirements
-3. Do NOT expand scope
+1. Only put skills in Mandatory Skills if the JD explicitly labels them as required/mandatory
+2. Only put skills in Good to have Skills if the JD explicitly labels them as preferred/nice-to-have
+3. AI Suggested Skills must NOT duplicate anything already in Mandatory Skills
+4. Do NOT assume intent beyond what is written
 
 If the JD is insufficient, return ONLY: "JD is very short, need more info on the JD"
 
 Output Format (when JD is valid):
-Key Skills:
-[List key skills with brief explanation]
-
 Mandatory Skills:
-[List mandatory skills with brief explanation]
+[List mandatory skills]
 
 Good To Have Skills:
-[List nice-to-have skills with brief explanation]
+[List nice-to-have skills]
+
+AI Suggested Skills:
+[List top 5 AI-recommended mandatory skills]
 
 No extra text. No explanations. No assumptions.`;
 
@@ -128,9 +129,9 @@ async function _callGroqWithRetry(userPrompt) {
  */
 function _parseAnalysisResponse(response) {
   try {
-    const keySkillsMatch = response.match(/Key Skills:\s*([\s\S]*?)(?=Mandatory Skills:|$)/i);
-    const mandatorySkillsMatch = response.match(/Mandatory Skills:\s*([\s\S]*?)(?=Good To Have Skills:|Good to have Skills:|$)/i);
-    const goodToHaveMatch = response.match(/Good To Have Skills:|Good to have Skills:\s*([\s\S]*?)$/i);
+    const mandatorySkillsMatch = response.match(/Mandatory Skills:\s*([\s\S]*?)(?=Good To Have Skills:|Good to have Skills:|AI Suggested Skills:|$)/i);
+    const goodToHaveMatch = response.match(/Good To Have Skills:|Good to have Skills:\s*([\s\S]*?)(?=AI Suggested Skills:|$)/i);
+    const aiSuggestedMatch = response.match(/AI Suggested Skills:\s*([\s\S]*?)$/i);
 
     const parseSkills = (text) => {
       if (!text) return [];
@@ -142,16 +143,16 @@ function _parseAnalysisResponse(response) {
     };
 
     return {
-      key_skills: parseSkills(keySkillsMatch ? keySkillsMatch[1] : ''),
       mandatory_skills: parseSkills(mandatorySkillsMatch ? mandatorySkillsMatch[1] : ''),
-      good_to_have_skills: parseSkills(goodToHaveMatch ? goodToHaveMatch[1] : '')
+      good_to_have_skills: parseSkills(goodToHaveMatch ? goodToHaveMatch[1] : ''),
+      key_skills: parseSkills(aiSuggestedMatch ? aiSuggestedMatch[1] : '')
     };
   } catch (error) {
     console.error('Error parsing analysis response:', error.message);
     return {
-      key_skills: [],
       mandatory_skills: [],
       good_to_have_skills: [],
+      key_skills: [],
       parse_error: error.message
     };
   }

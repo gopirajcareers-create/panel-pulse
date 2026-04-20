@@ -33,9 +33,9 @@ Extract ONLY the specific technical skill keywords from the JD.
 
 Return ONLY a valid JSON object — no thinking, no explanation, no preamble, no commentary:
 {
-  "key_skills": ["Skill1", "Skill2"],
   "mandatory_skills": ["Skill1", "Skill2"],
-  "good_to_have_skills": ["Skill1", "Skill2"]
+  "good_to_have_skills": ["Skill1", "Skill2"],
+  "key_skills": ["Skill1", "Skill2"]
 }
 
 RULES:
@@ -45,7 +45,7 @@ RULES:
 4. DO NOT repeat a skill across categories.
 5. If the JD explicitly labels skills as "mandatory" or "required", put them in mandatory_skills.
 6. If the JD labels skills as "nice to have" or "preferred" or "plus", put them in good_to_have_skills.
-7. All other core skills go in key_skills.`;
+7. key_skills: Based on the job title and role context, list the top 5 skills you would recommend as mandatory even if not explicitly stated. Use this ONLY as AI recommendations — do NOT include skills already in mandatory_skills.`;
 
 
 const PANEL_SUMMARY_SYSTEM_PROMPT = `You are a Senior HR Manager reviewing a panel interview evaluation report.
