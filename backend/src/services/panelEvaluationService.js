@@ -43,7 +43,7 @@ RULES:
 2. Each skill must be a short keyword (1-3 words max, e.g. "Java", "CI/CD", "REST APIs").
 3. DO NOT include sentences or phrases like "so those are mandatory" or "experience with".
 4. DO NOT repeat a skill across categories.
-5. If the JD explicitly labels skills as "mandatory" or "required", put them in mandatory_skills.
+5. mandatory_skills: ONLY include skills that the JD text EXPLICITLY marks with the exact words "mandatory", "required", "must have", "essential", or "must". If the JD does NOT use any of these exact words, mandatory_skills MUST be an empty array []. DO NOT infer or assume mandatory skills.
 6. If the JD labels skills as "nice to have" or "preferred" or "plus", put them in good_to_have_skills.
 7. key_skills: Based on the job title and role context, list the top 5 skills you would recommend as mandatory even if not explicitly stated. Use this ONLY as AI recommendations — do NOT include skills already in mandatory_skills.`;
 
@@ -118,10 +118,13 @@ async function performPanelEvaluation(input) {
       throw new Error('l1_transcripts must be an array of strings');
     }
 
+    // A meaningful L2 reason must have at least 10 real alphanumeric characters
+    const isMeaningfulL2 = (r) => r && r !== 'N/A' && r.replace(/[^a-zA-Z0-9]/g, '').length >= 10;
     const hasL2 = l2_rejection_reasons && l2_rejection_reasons.length > 0
-      && l2_rejection_reasons[0] && l2_rejection_reasons[0] !== 'N/A';
+      && isMeaningfulL2(l2_rejection_reasons[0]);
 
-    const userPrompt = _buildPanelScoringPrompt(job_id, jd, l1_transcripts, l2_rejection_reasons);
+    const meaningfulL2Reasons = l2_rejection_reasons.filter(isMeaningfulL2);
+    const userPrompt = _buildPanelScoringPrompt(job_id, jd, l1_transcripts, meaningfulL2Reasons);
 
     // L2 validation and panel scoring run in parallel — no sequential penalty
     const [l2ValidationResult, groqResponse] = await Promise.all([

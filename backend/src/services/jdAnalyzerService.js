@@ -18,8 +18,8 @@ You must classify the skills as:
 - AI Suggested Skills - Top 5 skills YOU recommend as mandatory based on the job title and role context, even if not explicitly stated in the JD
 
 CRITICAL RULES:
-1. Only put skills in Mandatory Skills if the JD explicitly labels them as required/mandatory
-2. Only put skills in Good to have Skills if the JD explicitly labels them as preferred/nice-to-have
+1. Mandatory Skills: ONLY include skills that the JD EXPLICITLY marks with the exact words "mandatory", "required", "must have", "essential", or "must". If the JD does NOT use any of these exact words, Mandatory Skills MUST be empty. DO NOT infer or assume.
+2. Only put skills in Good to have Skills if the JD explicitly labels them as preferred/nice-to-have/plus
 3. AI Suggested Skills must NOT duplicate anything already in Mandatory Skills
 4. Do NOT assume intent beyond what is written
 
