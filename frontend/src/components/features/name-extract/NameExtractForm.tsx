@@ -187,16 +187,13 @@ export function NameExtractForm() {
     setError(null);
     setEvaluationScore(null);
 
-    toast.loading("Evaluating panel...", { id: 'evaluate-toast' });
-
     try {
       const result = await panelApi.scorePanel(data);
       setEvaluationScore(result.panelEfficiencyScore);
       setEvaluationCategory(result.scoreCategory);
-      toast.success("Evaluation completed successfully!", { id: 'evaluate-toast' });
     } catch (err: any) {
       setError(err.message || 'Failed to evaluate panel.');
-      toast.error("Evaluation failed", { id: 'evaluate-toast' });
+      toast.error(err.message || 'Evaluation failed. Please try again.');
     } finally {
       setEvaluationLoading(false);
     }
@@ -353,11 +350,14 @@ export function NameExtractForm() {
 
           <div className="flex flex-col sm:flex-row gap-3">
             {evaluationScore !== null ? (
-              <div className="flex items-center gap-4">
+              <button
+                onClick={() => navigate('/dashboard')}
+                className="flex items-center gap-4 group"
+              >
                 <div className="flex flex-col items-end">
                   <span className="text-xs text-text-muted uppercase tracking-widest">Score</span>
                   <div className="flex items-baseline gap-1">
-                    <span className="text-2xl font-bold text-text-primary">{evaluationScore}</span>
+                    <span className="text-2xl font-bold text-text-primary group-hover:text-orange-400 transition-colors">{evaluationScore}</span>
                     <span className="text-xs text-text-muted">/10</span>
                   </div>
                   <span className={`text-[10px] font-bold uppercase tracking-wider ${
@@ -368,13 +368,10 @@ export function NameExtractForm() {
                     {evaluationCategory}
                   </span>
                 </div>
-                <button
-                  onClick={() => navigate('/dashboard')}
-                  className="px-6 py-2.5 bg-orange-600 text-white hover:bg-orange-700 rounded-lg font-medium text-sm transition-colors shadow-lg shadow-orange-900/40"
-                >
+                <span className="px-6 py-2.5 bg-orange-600 text-white group-hover:bg-orange-700 rounded-lg font-medium text-sm transition-colors shadow-lg shadow-orange-900/40">
                   View in Dashboard
-                </button>
-              </div>
+                </span>
+              </button>
             ) : (
               <>
 
