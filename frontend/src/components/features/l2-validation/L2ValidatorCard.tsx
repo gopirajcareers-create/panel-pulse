@@ -131,7 +131,7 @@ export function L2ValidatorCard({
               .map((r) => r.trim())
               .filter(Boolean)
               .map((reason, i) => {
-                const jf = result?.justifications?.[reason];
+                const jf = displayResult?.justifications?.[reason];
                 return (
                   <li key={i} className="space-y-1.5">
                     <div className="flex items-start gap-2 text-sm text-red-200 leading-snug">
@@ -174,7 +174,7 @@ export function L2ValidatorCard({
       )}
 
       {/* Result */}
-      {result && (
+      {displayResult && (
         <div className="space-y-4 pt-2 border-t border-white/[0.06]">
           {/* Probing depth */}
           <div>
@@ -183,7 +183,7 @@ export function L2ValidatorCard({
                 Probing Depth
               </p>
               <div className="relative">
-                <button 
+                <button
                   onMouseEnter={() => setShowTooltip(true)}
                   onMouseLeave={() => setShowTooltip(false)}
                   className="p-0.5 rounded-full hover:bg-white/10 transition-colors text-text-muted"
@@ -209,12 +209,12 @@ export function L2ValidatorCard({
                 </AnimatePresence>
               </div>
             </div>
-            <ProbingDepthBadge depth={result.probingDepth} />
+            <ProbingDepthBadge depth={displayResult.probingDepth} />
           </div>
 
           {/* Matching questions */}
-          {result.matchedQuestions && result.matchedQuestions.length > 0 && (
-            <ValidationEvidence questions={result.matchedQuestions} />
+          {displayResult.matchedQuestions && displayResult.matchedQuestions.length > 0 && (
+            <ValidationEvidence questions={displayResult.matchedQuestions} />
           )}
         </div>
       )}
