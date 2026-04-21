@@ -15,7 +15,7 @@ export function ValidationEvidence({ questions }: Props) {
 
   return (
     <div className="space-y-2">
-      <h4 className="text-xs font-semibold text-text-primary uppercase tracking-widest">Matching Questions</h4>
+      <h4 className="text-xs font-semibold text-text-primary uppercase tracking-widest">Transcript Evidence</h4>
       <ul className="space-y-2">
         {questions.map((question, index) => (
           <li

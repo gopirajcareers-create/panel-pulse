@@ -52,15 +52,15 @@ const PANEL_SUMMARY_SYSTEM_PROMPT = `You are a Senior HR Manager reviewing a pan
 Write a detailed, professional assessment of the interview panel's performance.
 
 CRITICAL FORMAT RULES — follow EXACTLY:
-1. Output FOUR sections only, each starting with an exact header followed by a colon. 
+1. Output FOUR sections only, each starting with an exact header followed by a colon.
    Use this exact format for each section (no ** stars, no markdown bold):
 
    Panel Member Behavior: <detailed analysis of interviewer professionalism and technical preparedness>
-   
+
    Interview Process: <detailed analysis of technical depth, scenario probing, and all 8 dimensions>
-   
-   Rejection Reason Validation: <detailed analysis of how well the panel validated the candidate's actual L2 rejection reasons>
-   
+
+   Rejection Reason Validation: <precise analysis of whether the L1 panel's probing was sufficient to surface the concerns that led L2 to REJECT this candidate. Context: the L1 panel SELECTED the candidate, but the L2 panel REJECTED them — this section must assess whether deeper L1 probing would have caught those rejection concerns. For each L2 rejection reason provided, state clearly whether the L1 probing was DEEP, SURFACE, or ABSENT, and explain specifically WHY — what the panelist did or failed to ask that supports that verdict.>
+
    Recommendation: <friendly, neat, and highly constructive recommendations for the interviewer to improve>
 
 2. Write 3-4 detailed, professional points for each section.
@@ -87,10 +87,10 @@ Rules:
 
 const L2_VALIDATION_SYSTEM_PROMPT = `You are an L2 validation expert reviewing rejection reasons.
 Classify the probing depth and validate evidence from transcripts.
-CRITICAL RULE: "evidence" MUST ONLY contain quotes from the INTERVIEWER/PANEL, NOT the candidate. You are judging the Panel's ability to probe.
+CRITICAL RULE: "evidence" MUST ONLY contain quotes from the INTERVIEWER/PANEL, NOT the candidate. You are judging the L1 Panel's ability to probe — the L1 panel SELECTED the candidate but L2 REJECTED them.
 For each rejection reason, you MUST provide:
-1. A clear one-line "summary" explaining where/how the panel probed this area and the result.
-2. 1-2 short, specific "points" of evidence based ONLY on the transcript (quoting the panelist).
+1. A clear one-line "summary" explaining whether the L1 panel probed this specific rejection area and whether that probing was sufficient to surface the L2 concern.
+2. 1-2 short "points" — choose the MOST REPRESENTATIVE panelist questions or probing statements from the transcript that BEST EXPLAIN WHY the verdict is DEEP, SURFACE, or NO PROBING. Pick excerpts that make the verdict immediately self-evident to a reader. If NO_PROBING, select the closest related panelist question (if any) to show what minimal or no probing looked like.
 Return ONLY valid JSON. No additional text.`;
 
 /**
@@ -155,7 +155,7 @@ async function performPanelEvaluation(input) {
     const [gapAnalysis, refinedJd, panelSummary] = await Promise.all([
       _generateGapAnalysis(evaluation, jd, l2_rejection_reasons),
       _generateRefinedJD(jd),
-      _generatePanelSummary(evaluation, jd, l2_rejection_reasons, null),
+      _generatePanelSummary(evaluation, jd, l2_rejection_reasons, null, l2ValidationResult),
     ]);
 
     evaluation.panel_summary = panelSummary;
@@ -740,7 +740,7 @@ function _parseJdSkillsFromText(text, rawContent) {
  * Generate a natural-language panel summary paragraph
  * @private
  */
-async function _generatePanelSummary(evaluation, jd, l2_rejection_reasons = [], gapAnalysis = null) {
+async function _generatePanelSummary(evaluation, jd, l2_rejection_reasons = [], gapAnalysis = null, l2ValidationResult = null) {
   try {
     // Derive score category from percentage of MAX_PANEL_SCORE
     const scorePct = evaluation.score / MAX_PANEL_SCORE;
@@ -756,8 +756,15 @@ async function _generatePanelSummary(evaluation, jd, l2_rejection_reasons = [], 
       })
       .join('\n');
 
+    const l2Verdict = l2ValidationResult?.success && l2ValidationResult?.validation?.probing_verdict
+      ? l2ValidationResult.validation.probing_verdict
+      : null;
+    const l2Notes = l2ValidationResult?.success && l2ValidationResult?.validation?.notes
+      ? l2ValidationResult.validation.notes
+      : '';
+
     const rejectionContext = l2_rejection_reasons.length > 0
-      ? `\nCandidate Rejection Reasons:\n${l2_rejection_reasons.map(r => `- ${r}`).join('\n')}`
+      ? `\nL2 Rejection Reasons (why L2 rejected the candidate that L1 had selected):\n${l2_rejection_reasons.map(r => `- ${r}`).join('\n')}${l2Verdict ? `\nL1 Probing Verdict for these reasons: ${l2Verdict}${l2Notes ? ' — ' + l2Notes : ''}` : ''}`
       : '';
 
     const gapContext = gapAnalysis
