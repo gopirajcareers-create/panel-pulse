@@ -1,8 +1,36 @@
 import { useUploadStore } from '@/lib/stores/upload.store';
 import { CheckCircle, AlertCircle, Loader } from 'lucide-react';
+import { useEffect, useState } from 'react';
+
+const THINKING_STEPS = [
+  'Reading interview transcripts...',
+  'Analyzing panel behavior patterns...',
+  'Evaluating technical depth & probing...',
+  'Cross-referencing L2 rejection reasons...',
+  'Computing competency scores...',
+  'Generating evaluation summary...',
+];
 
 export function UploadStatus() {
   const { uploadStatus, uploadProgress, uploadMessage } = useUploadStore();
+  const [stepIndex, setStepIndex] = useState(0);
+  const [stepVisible, setStepVisible] = useState(true);
+
+  useEffect(() => {
+    if (uploadStatus !== 'uploading') {
+      setStepIndex(0);
+      setStepVisible(true);
+      return;
+    }
+    const interval = setInterval(() => {
+      setStepVisible(false);
+      setTimeout(() => {
+        setStepIndex(i => (i + 1) % THINKING_STEPS.length);
+        setStepVisible(true);
+      }, 300);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [uploadStatus]);
 
   if (uploadStatus === 'idle') {
     return null;
@@ -20,7 +48,7 @@ export function UploadStatus() {
 
         <div>
           <p className="text-sm font-medium text-text-primary">
-            {uploadStatus === 'uploading' && 'Processing...'}
+            {uploadStatus === 'uploading' && 'Evaluating Panel...'}
             {uploadStatus === 'success' && 'Evaluation Complete'}
             {uploadStatus === 'error' && 'Error'}
           </p>
@@ -28,16 +56,51 @@ export function UploadStatus() {
         </div>
       </div>
 
-      {/* Progress Bar */}
+      {/* Thinking Steps */}
       {uploadStatus === 'uploading' && (
-        <div className="space-y-2">
-          <div className="w-full bg-white/[0.07] rounded-full h-2 overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-300"
-              style={{ width: `${uploadProgress}%` }}
-            />
+        <div className="space-y-3">
+          <div className="flex flex-col gap-1.5">
+            {THINKING_STEPS.map((step, i) => {
+              const isDone = i < stepIndex;
+              const isActive = i === stepIndex;
+              return (
+                <div
+                  key={step}
+                  className={`flex items-center gap-2 text-xs transition-all duration-300 ${
+                    isDone ? 'text-score-good' : isActive ? 'text-text-primary' : 'text-text-muted/40'
+                  }`}
+                >
+                  <span className="w-3 h-3 flex-shrink-0 flex items-center justify-center">
+                    {isDone ? (
+                      <CheckCircle className="w-3 h-3" />
+                    ) : isActive ? (
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                    ) : (
+                      <span className="w-1.5 h-1.5 rounded-full bg-white/10" />
+                    )}
+                  </span>
+                  <span
+                    className={`transition-opacity duration-300 ${
+                      isActive ? (stepVisible ? 'opacity-100' : 'opacity-0') : 'opacity-100'
+                    }`}
+                  >
+                    {step}
+                  </span>
+                </div>
+              );
+            })}
           </div>
-          <p className="text-xs text-text-muted text-right">{uploadProgress}%</p>
+
+          {/* Progress Bar */}
+          <div className="space-y-1 pt-1">
+            <div className="w-full bg-white/[0.07] rounded-full h-1.5 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-500"
+                style={{ width: `${uploadProgress}%` }}
+              />
+            </div>
+            <p className="text-xs text-text-muted text-right">{uploadProgress}%</p>
+          </div>
         </div>
       )}
 

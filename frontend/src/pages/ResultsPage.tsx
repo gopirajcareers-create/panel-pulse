@@ -11,6 +11,31 @@ import { dashboardApi } from '@/lib/api/dashboard.api';
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
+const REVEAL_SECTIONS = ['score', 'dimensions', 'summary', 'l2'] as const;
+type RevealSection = typeof REVEAL_SECTIONS[number];
+
+function useSectionReveal(hasData: boolean) {
+  const [visible, setVisible] = useState<Set<RevealSection>>(new Set());
+  const triggered = useRef(false);
+
+  useEffect(() => {
+    if (!hasData || triggered.current) return;
+    triggered.current = true;
+    const delays: { key: RevealSection; delay: number }[] = [
+      { key: 'score',      delay: 0   },
+      { key: 'dimensions', delay: 350 },
+      { key: 'summary',    delay: 750 },
+      { key: 'l2',         delay: 1100 },
+    ];
+    delays.forEach(({ key, delay }) => {
+      setTimeout(() => setVisible(prev => new Set([...prev, key])), delay);
+    });
+  }, [hasData]);
+
+  return (section: RevealSection) =>
+    `transition-all duration-700 ease-out ${visible.has(section) ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-5'}`;
+}
+
 export default function ResultsPage() {
   const navigate = useNavigate();
   const { evaluationId } = useParams<{ evaluationId: string }>();
@@ -54,6 +79,10 @@ export default function ResultsPage() {
       liveRef.current.textContent = `Evaluation complete: score ${typeof panelScore === 'number' ? panelScore.toFixed(1) : panelScore}`;
     }
   }, [panelScore]);
+
+  const revealClass = useSectionReveal(
+    displayScore !== null && displayScore !== undefined || !!cachedEvaluation
+  );
 
   // Use cached evaluation if available
   const displayData = cachedEvaluation || {
@@ -133,7 +162,7 @@ export default function ResultsPage() {
           />
 
           {/* Main Panel Efficiency Score */}
-          <section className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          <section className={`grid grid-cols-1 lg:grid-cols-4 gap-6 ${revealClass('score')}`}>
             <div className="lg:col-span-1">
               <ScoreCard
                 score={displayScore ?? 0}
@@ -143,9 +172,9 @@ export default function ResultsPage() {
             </div>
 
             {/* Dimension Grid */}
-            <div className="lg:col-span-3">
-              <DimensionGrid 
-                dimensions={displayDimensions} 
+            <div className={`lg:col-span-3 ${revealClass('dimensions')}`}>
+              <DimensionGrid
+                dimensions={displayDimensions}
                 evidence={displayEvidence}
                 refinedJd={cachedEvaluation?.refinedJd || (cachedEvaluation ? null : useEvaluationStore.getState().refinedJd)}
               />
@@ -154,7 +183,7 @@ export default function ResultsPage() {
 
           {/* JD Skills + Panel Summary row */}
           {(cachedEvaluation?.refinedJd || useEvaluationStore.getState().refinedJd || cachedEvaluation?.panelSummary || cachedEvaluation?.gapAnalysis || useEvaluationStore.getState().panelSummary) && (
-            <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <section className={`grid grid-cols-1 lg:grid-cols-2 gap-6 ${revealClass('summary')}`}>
               <JdSkillsCard refinedJd={cachedEvaluation?.refinedJd || (cachedEvaluation ? null : useEvaluationStore.getState().refinedJd)} />
               <PanelSummaryCard
                 summary={cachedEvaluation?.panelSummary || (cachedEvaluation ? null : useEvaluationStore.getState().panelSummary)}
@@ -166,7 +195,7 @@ export default function ResultsPage() {
 
           {/* L2 Validation Section */}
           {displayL2Reasons.length > 0 && (
-            <section>
+            <section className={revealClass('l2')}>
               <L2ValidatorCard
                 l1Transcript={displayL1}
                 l2RejectionReason={displayL2Reasons[0]}
