@@ -15,7 +15,7 @@ import type { SearchResponse } from '@/types/dashboard.types';
 export default function DashboardPage() {
   const { stats, loading, error, fetchStats } = useDashboardStore();
   const [searchResults, setSearchResults] = useState<SearchResponse | null>(null);
-  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(true);
   const [hasSearched, setHasSearched] = useState(false);
   const [totalPanels, setTotalPanels] = useState(0);
   const [sortBy, setSortBy] = useState('created_at');
