@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileText,
   Download,
@@ -8,8 +8,18 @@ import {
   AlertCircle,
   FileCode,
   Zap,
-  Play
+  Play,
+  CheckCircle
 } from 'lucide-react';
+
+const THINKING_STEPS = [
+  'Reading interview transcripts...',
+  'Analyzing panel behavior patterns...',
+  'Evaluating technical depth & probing...',
+  'Cross-referencing L2 rejection reasons...',
+  'Computing competency scores...',
+  'Generating evaluation summary...',
+];
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 
@@ -55,6 +65,26 @@ export function NameExtractForm() {
   const [evaluationLoading, setEvaluationLoading] = useState(false);
   const [evaluationScore, setEvaluationScore] = useState<number | null>(null);
   const [evaluationCategory, setEvaluationCategory] = useState<string | null>(null);
+
+  // Thinking steps animation
+  const [stepIndex, setStepIndex] = useState(0);
+  const [stepVisible, setStepVisible] = useState(true);
+
+  useEffect(() => {
+    if (!evaluationLoading) {
+      setStepIndex(0);
+      setStepVisible(true);
+      return;
+    }
+    const interval = setInterval(() => {
+      setStepVisible(false);
+      setTimeout(() => {
+        setStepIndex(i => (i + 1) % THINKING_STEPS.length);
+        setStepVisible(true);
+      }, 300);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [evaluationLoading]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'jd' | 'l1' | 'l2') => {
     if (e.target.files && e.target.files[0]) {
@@ -335,47 +365,46 @@ export function NameExtractForm() {
 
       {/* Action panel conditionally appears after all 3 or whenever there's evaluation success */}
       {(allThreeExtracted || evaluationScore !== null) && (
-        <div className="bg-primary/5 border border-primary/20 rounded-xl p-6 sm:flex sm:items-center sm:justify-between space-y-4 sm:space-y-0">
-          <div>
-            <h3 className="text-lg font-bold text-text-primary flex items-center gap-2">
-              <Zap className="w-5 h-5 text-primary" />
-              Ready for Evaluation
-            </h3>
-            <p className="text-sm text-text-muted mt-1">
-              Job ID: <span className="text-text-primary font-medium">{jobId || 'N/A'}</span> &bull; 
-              Candidate: <span className="text-text-primary font-medium">{candidateName || 'N/A'}</span> &bull; 
-              Panel: <span className="text-text-primary font-medium">{panelName || 'N/A'}</span>
-            </p>
-          </div>
+        <div className="bg-primary/5 border border-primary/20 rounded-xl p-6 space-y-4">
+          {/* Header + button row */}
+          <div className="sm:flex sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-lg font-bold text-text-primary flex items-center gap-2">
+                <Zap className="w-5 h-5 text-primary" />
+                Ready for Evaluation
+              </h3>
+              <p className="text-sm text-text-muted mt-1">
+                Job ID: <span className="text-text-primary font-medium">{jobId || 'N/A'}</span> &bull;
+                Candidate: <span className="text-text-primary font-medium">{candidateName || 'N/A'}</span> &bull;
+                Panel: <span className="text-text-primary font-medium">{panelName || 'N/A'}</span>
+              </p>
+            </div>
 
-          <div className="flex flex-col sm:flex-row gap-3">
-            {evaluationScore !== null ? (
-              <button
-                onClick={() => navigate('/dashboard')}
-                className="flex items-center gap-4 group"
-              >
-                <div className="flex flex-col items-end">
-                  <span className="text-xs text-text-muted uppercase tracking-widest">Score</span>
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-2xl font-bold text-text-primary group-hover:text-orange-400 transition-colors">{evaluationScore}</span>
-                    <span className="text-xs text-text-muted">/10</span>
+            <div className="flex flex-col sm:flex-row gap-3 items-end mt-4 sm:mt-0">
+              {evaluationScore !== null ? (
+                <button
+                  onClick={() => navigate('/dashboard')}
+                  className="flex items-center gap-4 group"
+                >
+                  <div className="flex flex-col items-end">
+                    <span className="text-xs text-text-muted uppercase tracking-widest">Score</span>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-2xl font-bold text-text-primary group-hover:text-orange-400 transition-colors">{evaluationScore}</span>
+                      <span className="text-xs text-text-muted">/10</span>
+                    </div>
+                    <span className={`text-[10px] font-bold uppercase tracking-wider ${
+                      evaluationCategory === 'Good' ? 'text-emerald-400' :
+                      evaluationCategory === 'Moderate' ? 'text-orange-400' :
+                      'text-red-400'
+                    }`}>
+                      {evaluationCategory}
+                    </span>
                   </div>
-                  <span className={`text-[10px] font-bold uppercase tracking-wider ${
-                    evaluationCategory === 'Good' ? 'text-emerald-400' :
-                    evaluationCategory === 'Moderate' ? 'text-orange-400' :
-                    'text-red-400'
-                  }`}>
-                    {evaluationCategory}
+                  <span className="px-6 py-2.5 bg-orange-600 text-white group-hover:bg-orange-700 rounded-lg font-medium text-sm transition-colors shadow-lg shadow-orange-900/40">
+                    View in Dashboard
                   </span>
-                </div>
-                <span className="px-6 py-2.5 bg-orange-600 text-white group-hover:bg-orange-700 rounded-lg font-medium text-sm transition-colors shadow-lg shadow-orange-900/40">
-                  View in Dashboard
-                </span>
-              </button>
-            ) : (
-              <>
-
-
+                </button>
+              ) : (
                 <button
                   onClick={handleEvaluateDirectly}
                   disabled={evaluationLoading}
@@ -388,9 +417,44 @@ export function NameExtractForm() {
                   )}
                   {evaluationLoading ? 'Evaluating...' : 'Evaluate'}
                 </button>
-              </>
-            )}
+              )}
+            </div>
           </div>
+
+          {/* Thinking steps — visible only during evaluation */}
+          {evaluationLoading && (
+            <div className="border-t border-white/[0.06] pt-4 flex flex-col gap-1.5">
+              {THINKING_STEPS.map((step, i) => {
+                const isDone = i < stepIndex;
+                const isActive = i === stepIndex;
+                return (
+                  <div
+                    key={step}
+                    className={`flex items-center gap-2 text-xs transition-all duration-300 ${
+                      isDone ? 'text-score-good' : isActive ? 'text-text-primary' : 'text-text-muted/40'
+                    }`}
+                  >
+                    <span className="w-3 h-3 flex-shrink-0 flex items-center justify-center">
+                      {isDone ? (
+                        <CheckCircle className="w-3 h-3" />
+                      ) : isActive ? (
+                        <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                      ) : (
+                        <span className="w-1.5 h-1.5 rounded-full bg-white/10" />
+                      )}
+                    </span>
+                    <span
+                      className={`transition-opacity duration-300 ${
+                        isActive ? (stepVisible ? 'opacity-100' : 'opacity-0') : 'opacity-100'
+                      }`}
+                    >
+                      {step}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
