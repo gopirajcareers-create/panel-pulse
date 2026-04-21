@@ -80,10 +80,6 @@ export default function ResultsPage() {
     }
   }, [panelScore]);
 
-  const revealClass = useSectionReveal(
-    displayScore !== null && displayScore !== undefined || !!cachedEvaluation
-  );
-
   // Use cached evaluation if available
   const displayData = cachedEvaluation || {
     jobId,
@@ -104,6 +100,10 @@ export default function ResultsPage() {
     ? cachedEvaluation.l2RejectionReasons
     : l2RejectionReason ? [l2RejectionReason] : [];
   const displayL1 = cachedEvaluation?.l1Transcript ?? l1Transcript ?? '';
+
+  const revealClass = useSectionReveal(
+    (displayScore !== null && displayScore !== undefined) || !!cachedEvaluation
+  );
 
   // Show error if fetch failed
   if (fetchError) {
