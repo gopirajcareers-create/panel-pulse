@@ -1,0 +1,13 @@
+{
+  "builder": "nixpacks",
+  "build": {
+    "cmd": "npm install"
+  },
+  "start": {
+    "cmd": "npm start"
+  },
+  "env": {
+    "NODE_ENV": "production",
+    "FRONTEND_URL": "https://panel-pulse.vercel.app"
+  }
+}

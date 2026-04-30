@@ -1,0 +1,170 @@
+[
+  {
+    "id": "TC01",
+    "category": "Data Retrieval",
+    "question": "Who are the top 5 panels ranked by overall score?",
+    "expectedSections": ["MATCH STATUS", "TOP RECOMMENDATION", "KEY EVIDENCE"],
+    "expectedKeywords": ["score", "/10", "panel"],
+    "expectedBehavior": "Returns a ranked list of panel members with their scores and evidence",
+    "shouldContainScores": true,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  },
+  {
+    "id": "TC02",
+    "category": "Dimension Analysis",
+    "question": "Which panels scored poorly on Technical Depth?",
+    "expectedSections": ["MATCH STATUS", "KEY EVIDENCE"],
+    "expectedKeywords": ["Technical Depth", "score", "/10"],
+    "expectedBehavior": "Lists panels with low Technical Depth dimension scores with evidence",
+    "shouldContainScores": true,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  },
+  {
+    "id": "TC03",
+    "category": "Dimension Analysis",
+    "question": "Show me panels with the highest Mandatory Skill Coverage score",
+    "expectedSections": ["MATCH STATUS", "TOP RECOMMENDATION", "KEY EVIDENCE"],
+    "expectedKeywords": ["Mandatory Skill Coverage", "score"],
+    "expectedBehavior": "Returns panels sorted by Mandatory Skill Coverage dimension",
+    "shouldContainScores": true,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  },
+  {
+    "id": "TC04",
+    "category": "Skill Matching",
+    "question": "Which panel member is most suited for Python-based interviews?",
+    "expectedSections": ["MATCH STATUS"],
+    "expectedKeywords": ["Python", "match"],
+    "expectedBehavior": "Should state direct/related match status and suggest alternatives if no direct match",
+    "shouldContainScores": true,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  },
+  {
+    "id": "TC05",
+    "category": "Candidate Lookup",
+    "question": "Tell me about candidate Harikrishnan and his evaluation results",
+    "expectedSections": ["MATCH STATUS", "KEY EVIDENCE"],
+    "expectedKeywords": ["Harikrishnan"],
+    "expectedBehavior": "Returns specific candidate data if exists, or states no match found",
+    "shouldContainScores": true,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  },
+  {
+    "id": "TC06",
+    "category": "Out-of-Domain",
+    "question": "What is the weather today in Chennai?",
+    "expectedSections": [],
+    "expectedKeywords": [],
+    "expectedBehavior": "Should gracefully state it only handles panel evaluation data, not general queries",
+    "shouldContainScores": false,
+    "shouldReturnSources": false,
+    "isErrorCase": false,
+    "expectOutOfDomain": true
+  },
+  {
+    "id": "TC07",
+    "category": "Error Handling",
+    "question": "",
+    "expectedSections": [],
+    "expectedKeywords": ["error", "required"],
+    "expectedBehavior": "Returns HTTP 400 with error message about missing/empty message",
+    "shouldContainScores": false,
+    "shouldReturnSources": false,
+    "isErrorCase": true,
+    "expectedHttpStatus": 400
+  },
+  {
+    "id": "TC08",
+    "category": "Edge Case",
+    "question": "asdfghjkl zxcvbnm qwertyuiop random gibberish text",
+    "expectedSections": [],
+    "expectedKeywords": [],
+    "expectedBehavior": "Returns a response; should either state no relevant data or provide general guidance",
+    "shouldContainScores": false,
+    "shouldReturnSources": false,
+    "isErrorCase": false,
+    "expectNoRelevantData": true
+  },
+  {
+    "id": "TC09",
+    "category": "Experience Analysis",
+    "question": "Who is the panel member with the most interview experience in the dataset?",
+    "expectedSections": ["MATCH STATUS", "TOP RECOMMENDATION"],
+    "expectedKeywords": ["experience", "interviews", "count"],
+    "expectedBehavior": "Identifies the panel member associated with the highest number of evaluation records",
+    "shouldContainScores": false,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  },
+  {
+    "id": "TC10",
+    "category": "Rejection Deep-Dive",
+    "question": "Summarize the rejection reasons for candidate Arunkumar Kannan",
+    "expectedSections": ["MATCH STATUS", "KEY EVIDENCE"],
+    "expectedKeywords": ["rejection", "gap", "validation"],
+    "expectedBehavior": "Synthesizes L2 rejection rationale and validation alignment from multiple records",
+    "shouldContainScores": true,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  },
+  {
+    "id": "TC11",
+    "category": "Specific Dimension Analysis",
+    "question": "Which panel members have a leadership evaluation score below 0.5?",
+    "expectedSections": ["MATCH STATUS", "KEY EVIDENCE"],
+    "expectedKeywords": ["leadership", "score", "low"],
+    "expectedBehavior": "Filters panels where the Leadership Evaluation dimension score is below the threshold",
+    "shouldContainScores": true,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  },
+  {
+    "id": "TC12",
+    "category": "Performance Comparison",
+    "question": "Compare the evaluation style of Arunkumar Kannan and Jayapriya Ravichandran",
+    "expectedSections": ["MATCH STATUS", "KEY EVIDENCE"],
+    "expectedKeywords": ["Arunkumar", "Jayapriya", "compare"],
+    "expectedBehavior": "Provides a comparative summary focusing on their respective scoring trends and evidence quality",
+    "shouldContainScores": true,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  },
+  {
+    "id": "TC13",
+    "category": "Trend Analysis",
+    "question": "What are the common technical gaps identified in L2 rejections?",
+    "expectedSections": ["MATCH STATUS", "CONSULTANT ADVICE"],
+    "expectedKeywords": ["technical", "gaps", "common"],
+    "expectedBehavior": "Aggregates common rejection themes across all available evaluation records",
+    "shouldContainScores": false,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  },
+  {
+    "id": "TC14",
+    "category": "Skill Suitability",
+    "question": "Find panels who have evaluated candidates for Automation Testing or QA roles",
+    "expectedSections": ["MATCH STATUS", "TOP RECOMMENDATION"],
+    "expectedKeywords": ["Automation Testing", "QA", "suitability"],
+    "expectedBehavior": "Identifies panel members with experience in relevant domain-specific evaluations",
+    "shouldContainScores": true,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  },
+  {
+    "id": "TC15",
+    "category": "Methodology",
+    "question": "Explain how the 'Probing Depth' is calculated for these panels",
+    "expectedSections": ["MATCH STATUS"],
+    "expectedKeywords": ["probing depth", "score", "dimension"],
+    "expectedBehavior": "Provides an explanation of the probing depth logic (Surface/Deep) based on the context data",
+    "shouldContainScores": false,
+    "shouldReturnSources": true,
+    "isErrorCase": false
+  }
+]

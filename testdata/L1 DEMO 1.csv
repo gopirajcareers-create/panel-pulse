@@ -1,0 +1,55 @@
+Job Interview ID,Candidate Name,role,panel_member_id,Panel Name,panel_member_email,JD,L1_decision,L1 Transcript
+JD1,Arun Kumar,Backend Engineer,P1101,Siddharth Rao,siddharth.r@techcorp.com,"Python Internals, DSA, REST APIs, Scalability",Reject,"Interviewer: Good morning, Arun. Uh, welcome to the Backend Engineer interview. How are you today?
+Arun Kumar: Good morning sir, I am doing well, thank you.
+Interviewer: Great. Let’s start with Python fundamentals. Can you explain how Python handles memory management internally?
+Arun Kumar: Hmm… I know it has something like garbage collection, but I’m not very clear on the internal working.
+Interviewer: Okay. Can you explain reference counting in Python and how the garbage collector works with cyclic references?
+Arun Kumar: Uh… I have heard about reference counting, but I don’t know how cyclic references are handled.
+Interviewer: Alright. What is the Global Interpreter Lock? Why does it exist?
+Arun Kumar: The GIL… I think it restricts multi-threading, but I’m not sure why it exists exactly.
+Interviewer: If GIL restricts multi-threading, how would you design a high-concurrency backend system in Python?
+Arun Kumar: Maybe using multi-processing? I haven’t designed such systems myself.
+Interviewer: Hmm. Let’s move to data structures. Can you implement a stack using Python and explain time complexity of push and pop?
+Arun Kumar: We can use a list, but I’m not sure about the time complexity.
+Interviewer: What is the time complexity of list append and pop operations?
+Arun Kumar: Uh… I think it is constant time, but I am not fully sure.
+Interviewer: Explain the difference between a list and a deque for stack/queue implementation.
+Arun Kumar: I have not used deque before.
+Interviewer: Can you explain how a hash table works internally?
+Arun Kumar: It stores key-value pairs, but I don’t know the internal hashing mechanism.
+Interviewer: How does Python dictionary handle collisions?
+Arun Kumar: Hmm… I am not sure about collision handling.
+Interviewer: Let’s talk about REST APIs. Can you explain idempotent HTTP methods?
+Arun Kumar: GET is idempotent… I think. I’m not very clear about others.
+Interviewer: What is the difference between PUT and PATCH?
+Arun Kumar: I get confused between those two.
+Interviewer: Suppose your API response time increases drastically. How would you debug performance bottlenecks?
+Arun Kumar: I would check logs, maybe optimize queries, but I have not done it before.
+Interviewer: How do you analyze time complexity of your code? Can you calculate Big O for nested loops?
+Arun Kumar: I understand Big O in theory, but I struggle calculating it practically.
+Interviewer: Hmm, okay. One final question — how would you design a scalable backend for 1 million users?
+Arun Kumar: I haven’t designed such systems before.
+Interviewer: Thank you Arun. Do you have any questions?
+Arun Kumar: No sir. Thank you for the opportunity.
+Interviewer: Alright, we’ll get back to you. Have a good day.
+Arun Kumar: Thank you."
+JD2,Swarna,Full Stack Developer,P1102,Harinder Singh,harinder.s@techcorp.com,"Full Stack, React Internals, Node.js, DB Indexing",Reject,"Harinder: Hi Swarna, welcome. Let's dive straight into the Full Stack role. You mentioned React expertise—can you explain how the React Fiber architecture differs from the old stack reconciler?
+Swarna: Hi Harinder. Fiber is the new engine in React 16. It allows for incremental rendering by splitting work into chunks.
+Harinder: Interesting. How does it handle 'priority' for these chunks? What happens to a low-priority render if a high-priority animation comes in?
+Swarna: It pauses the low-priority work and finishes the animation first. I think it uses some scheduling logic.
+Harinder: Precisely. Let's look at Node.js. Can you walk me through the phases of the Event Loop? Specifically, what's the difference between the 'poll' phase and the 'check' phase?
+Swarna: The event loop handles async callbacks. Poll phase is where it waits for new I/O events. Check phase is for setImmediate.
+Harinder: Good. When exactly would you choose setImmediate over process.nextTick, and why?
+Swarna: I usually use nextTick for things that need to happen immediately after the current operation. I'm not entirely sure about the performance trade-offs though.
+Harinder: Fair enough. Moving to databases—if a query on a large 'Orders' table is slow despite having an index on 'customer_id', how would you investigate?
+Swarna: I would check the execution plan using EXPLAIN ANALYZE.
+Harinder: If the execution plan shows a Sequential Scan instead of an Index Scan even with the index present, what could be the reasons?
+Swarna: Maybe the table is small? Or the data distribution is skewed?
+Harinder: What about index cardinality or a 'WHERE' clause with a function? If I write 'WHERE YEAR(order_date) = 2023', will a standard B-tree index on 'order_date' be used?
+Swarna: Ah, no. Because the function prevents the index from being used directly. We would need a functional index.
+Harinder: Correct. Last one—how do you manage state transitions in a complex microservices environment to ensure eventual consistency? Have you used the Saga pattern?
+Swarna: I've heard of Sagas, but I've mostly worked with distributed transactions or simple two-phase commits.
+Harinder: Why are two-phase commits generally avoided in high-scale microservices?
+Swarna: Because they are slow and can cause blocking. I'm not clear on how Sagas solve this without atomicity.
+Harinder: We'll wrap it up here. Thanks Swarna.
+Swarna: Thank you Harinder."

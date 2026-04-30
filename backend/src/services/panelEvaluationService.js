@@ -1,0 +1,879 @@
+/**
+ * Panel Evaluation Service
+ * 
+ * LLM-based panel evaluation scoring for interview candidates.
+ * Generates scores across multiple dimensions and validates L2 rejection reasons.
+ */
+
+const axios = require('axios');
+
+// Panel scoring configuration — max scores per dimension; final score = SUM of all
+// Weighted: Mandatory (25%) + Technical Depth (25%) = 50%; remaining 6 dims share 50%
+const PANEL_DIMENSIONS = {
+  'Mandatory Skill Coverage': { max: 2.0 },
+  'Technical Depth': { max: 2.0 },
+  'Rejection Validation Alignment': { max: 2.0 }, // Added based on user feedback
+  'Scenario / Risk Evaluation': { max: 1.0 },
+  'Framework Knowledge': { max: 1.0 },
+  'Hands-on Validation': { max: 1.0 },
+  'Leadership Evaluation': { max: 0.5 },
+  'Behavioral Assessment': { max: 0.5 }
+};
+// Maximum possible panel score (sum of all dimension maxes) = 10.0
+const MAX_PANEL_SCORE = Object.values(PANEL_DIMENSIONS).reduce((s, d) => s + d.max, 0);
+
+// System prompts
+const PANEL_SCORING_SYSTEM_PROMPT = `You are an expert panel evaluator assessing interview candidates. 
+Your task is to score candidates across multiple dimensions using the provided transcripts and job description.
+Return ONLY valid JSON matching the exact schema provided. No additional text.`;
+
+const JD_REFINE_SYSTEM_PROMPT = `/no_think
+You are a Senior Recruitment Manager.
+Extract ONLY the specific technical skill keywords from the JD.
+
+Return ONLY a valid JSON object — no thinking, no explanation, no preamble, no commentary:
+{
+  "mandatory_skills": ["Skill1", "Skill2"],
+  "good_to_have_skills": ["Skill1", "Skill2"],
+  "key_skills": ["Skill1", "Skill2"]
+}
+
+RULES:
+1. Output ONLY the JSON object. DO NOT output any other text before or after the JSON.
+2. Each skill must be a short keyword (1-3 words max, e.g. "Java", "CI/CD", "REST APIs").
+3. DO NOT include sentences or phrases like "so those are mandatory" or "experience with".
+4. DO NOT repeat a skill across categories.
+5. mandatory_skills: ONLY include skills that the JD text EXPLICITLY marks with the exact words "mandatory", "required", "must have", "essential", or "must". If the JD does NOT use any of these exact words, mandatory_skills MUST be an empty array []. DO NOT infer or assume mandatory skills.
+6. If the JD labels skills as "nice to have" or "preferred" or "plus", put them in good_to_have_skills.
+7. key_skills: Based on the job title and role context, list the top 5 skills you would recommend as mandatory even if not explicitly stated. Use this ONLY as AI recommendations — do NOT include skills already in mandatory_skills.`;
+
+
+const PANEL_SUMMARY_SYSTEM_PROMPT = `You are a Senior HR Manager reviewing a panel interview evaluation report.
+Write a detailed, professional assessment of the interview panel's performance.
+
+CRITICAL FORMAT RULES — follow EXACTLY:
+1. Output FOUR sections only, each starting with an exact header followed by a colon.
+   Use this exact format for each section (no ** stars, no markdown bold):
+
+   Panel Member Behavior: <detailed analysis of interviewer professionalism and technical preparedness>
+
+   Interview Process: <detailed analysis of technical depth, scenario probing, and all 8 dimensions>
+
+   Rejection Reason Validation: <precise analysis of whether the L1 panel's probing was sufficient to surface the concerns that led L2 to REJECT this candidate. Context: the L1 panel SELECTED the candidate, but the L2 panel REJECTED them — this section must assess whether deeper L1 probing would have caught those rejection concerns. For each L2 rejection reason provided, state clearly whether the L1 probing was DEEP, SURFACE, or ABSENT, and explain specifically WHY — what the panelist did or failed to ask that supports that verdict.>
+
+   Recommendation: <friendly, neat, and highly constructive recommendations for the interviewer to improve>
+
+2. Write 3-4 detailed, professional points for each section.
+3. DO NOT use **bold**, *italic*, or any markdown formatting. Plain text only.
+4. Use highly formal, definitive business English.
+5. NOISE ROBUSTNESS: Ignore small talk, audio drops, or irrelevant tangents. Evaluate ONLY technical probing quality.
+6. Tone by Score:
+   - Score >= 8.0 or DEEP_PROBING verdict: Highly positive, praise technical depth.
+   - Score < 8.0 or SURFACE/NO_PROBING: Direct and constructive, naming specific missed areas.
+7. Make every section specific to the actual JD skills and transcript content — no generic filler.`;
+
+const GAP_ANALYSIS_SYSTEM_PROMPT = `You are a friendly and professional HR Quality Assurance Specialist. 
+Your task is to write a short "Recommendation" summary based on the L2 Rejection Reasons and the panel's scoring gaps.
+
+Analyze:
+1. Did the panel fail to ask enough questions in the areas where the candidate was rejected?
+2. Did they accept surface-level answers for critical mandatory skills?
+3. What specifically should the panel have probed deeper on to confirm the rejection earlier?
+
+Rules:
+1. Be highly polite, friendly, neat, and highly constructive.
+2. Focus on actionable recommendations for the panel member to improve their probing behavior.
+3. Format as a bulleted markdown list. No intro/outro.`;
+
+const L2_VALIDATION_SYSTEM_PROMPT = `You are an L2 validation expert reviewing rejection reasons.
+Classify the probing depth and validate evidence from transcripts.
+CRITICAL RULE: "evidence" MUST ONLY contain quotes from the INTERVIEWER/PANEL, NOT the candidate. You are judging the L1 Panel's ability to probe — the L1 panel SELECTED the candidate but L2 REJECTED them.
+For each rejection reason, you MUST provide:
+1. A clear one-line "summary" explaining whether the L1 panel probed this specific rejection area and whether that probing was sufficient to surface the L2 concern.
+2. 1-2 short "points" — choose the MOST REPRESENTATIVE panelist questions or probing statements from the transcript that BEST EXPLAIN WHY the verdict is DEEP, SURFACE, or NO PROBING. Pick excerpts that make the verdict immediately self-evident to a reader. If NO_PROBING, select the closest related panelist question (if any) to show what minimal or no probing looked like.
+Return ONLY valid JSON. No additional text.`;
+
+/**
+ * Perform panel evaluation scoring
+ * 
+ * @param {Object} input - Evaluation input
+ * @param {string} input.job_id - Job/Interview ID
+ * @param {string} input.panel_name - Panel name (optional)
+ * @param {string} input.candidate_name - Candidate name (optional)
+ * @param {string} input.jd - Job Description
+ * @param {Array<string>} input.l1_transcripts - L1 interview transcripts
+ * @param {Array<string>} input.l2_rejection_reasons - L2 rejection reasons (optional)
+ * @returns {Promise<Object>} Panel evaluation result
+ */
+async function performPanelEvaluation(input) {
+  try {
+    const { job_id, panel_name = '', candidate_name = '', jd, l1_transcripts, l2_rejection_reasons = [], panel_member_id = '', panel_member_email = '' } = input;
+
+    // Validate inputs
+    if (!job_id || !jd || !l1_transcripts || l1_transcripts.length === 0) {
+      throw new Error('Missing required parameters: job_id, jd, l1_transcripts (non-empty array)');
+    }
+
+    if (!Array.isArray(l1_transcripts)) {
+      throw new Error('l1_transcripts must be an array of strings');
+    }
+
+    // A meaningful L2 reason must have at least 10 real alphanumeric characters
+    const isMeaningfulL2 = (r) => r && r !== 'N/A' && r.replace(/[^a-zA-Z0-9]/g, '').length >= 10;
+    const hasL2 = l2_rejection_reasons && l2_rejection_reasons.length > 0
+      && isMeaningfulL2(l2_rejection_reasons[0]);
+
+    const meaningfulL2Reasons = l2_rejection_reasons.filter(isMeaningfulL2);
+    const userPrompt = _buildPanelScoringPrompt(job_id, jd, l1_transcripts, meaningfulL2Reasons);
+
+    // L2 validation and panel scoring run in parallel — no sequential penalty
+    const [l2ValidationResult, groqResponse] = await Promise.all([
+      hasL2
+        ? validateL2Rejection({ job_id, l2_reason: l2_rejection_reasons[0], l1_transcripts }).catch(() => null)
+        : Promise.resolve(null),
+      _callGroqWithRetry(userPrompt, PANEL_SCORING_SYSTEM_PROMPT),
+    ]);
+
+    const evaluation = _parseAndValidatePanelScore(groqResponse, job_id);
+
+    // Correct RVA score using the independent L2 verdict when the scorer got it wrong
+    if (l2ValidationResult?.success && l2ValidationResult?.validation?.probing_verdict) {
+      const verdict = l2ValidationResult.validation.probing_verdict;
+      const rva = evaluation.categories['Rejection Validation Alignment'];
+      if (verdict === 'DEEP_PROBING' && rva < 1.0) {
+        evaluation.categories['Rejection Validation Alignment'] = 1.8;
+      } else if (verdict === 'SURFACE_PROBING' && rva < 0.5) {
+        evaluation.categories['Rejection Validation Alignment'] = 0.8;
+      } else if (verdict === 'NO_PROBING' && rva > 1.0) {
+        evaluation.categories['Rejection Validation Alignment'] = 0.2;
+      }
+      const correctedSum = Object.values(evaluation.categories).reduce((s, v) => s + v, 0);
+      evaluation.score = Math.round(correctedSum * 10) / 10;
+    }
+
+    // Gap analysis, refined JD, and panel summary are all independent — run in parallel
+    const [gapAnalysis, refinedJd, panelSummary] = await Promise.all([
+      _generateGapAnalysis(evaluation, jd, l2_rejection_reasons),
+      _generateRefinedJD(jd),
+      _generatePanelSummary(evaluation, jd, l2_rejection_reasons, null, l2ValidationResult),
+    ]);
+
+    evaluation.panel_summary = panelSummary;
+    evaluation.gap_analysis = gapAnalysis;
+    evaluation.refined_jd = refinedJd;
+
+    // 7. Store in DB
+    await _storeEvaluationInDB({
+      ...evaluation,
+      panel_name,
+      candidate_name,
+      l2_rejection_reasons,
+      l1_transcript: l1_transcripts.join('\n\n'),
+      refined_jd: refinedJd,
+      panel_summary: panelSummary,
+      gap_analysis: gapAnalysis,
+      l2_detailed_validation: l2ValidationResult?.success ? l2ValidationResult.validation : null,
+      panel_member_id,
+      panel_member_email
+    });
+
+    return {
+      success: true,
+      evaluation: evaluation,
+      refined_jd: refinedJd,
+      panel_summary: panelSummary,
+      gap_analysis: gapAnalysis,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('Error in panel evaluation:', error.message);
+    const isRateLimit = /rate limit|429/i.test(error.message || '');
+    return {
+      success: false,
+      error: error.message,
+      error_code: isRateLimit ? 429 : 500,
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+
+/**
+ * Validate L2 rejection reasons
+ * 
+ * @param {Object} input - Validation input
+ * @param {string} input.job_id - Job/Interview ID
+ * @param {string} input.l2_reason - L2 rejection reason
+ * @param {Array<string>} input.l1_transcripts - L1 transcripts for evidence
+ * @returns {Promise<Object>} L2 validation result
+ */
+async function validateL2Rejection(input) {
+  try {
+    const { job_id, l2_reason, l1_transcripts } = input;
+
+    // Validate inputs
+    if (!job_id || !l2_reason || !l1_transcripts) {
+      throw new Error('Missing required parameters: job_id, l2_reason, l1_transcripts');
+    }
+
+    if (!Array.isArray(l1_transcripts) || l1_transcripts.length === 0) {
+      throw new Error('l1_transcripts must be a non-empty array');
+    }
+
+    // Build validation prompt
+    const userPrompt = _buildL2ValidationPrompt(job_id, l2_reason, l1_transcripts);
+
+    // Call LLM
+    const groqResponse = await _callGroqWithRetry(userPrompt, L2_VALIDATION_SYSTEM_PROMPT, 1000);
+
+    // Parse response
+    const validation = _parseL2ValidationResponse(groqResponse);
+
+    return {
+      success: true,
+      validation: validation,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    console.error('Error in L2 validation:', error.message);
+    const isRateLimit = /rate limit|429/i.test(error.message || '');
+    return {
+      success: false,
+      error: error.message,
+      error_code: isRateLimit ? 429 : 500,
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+
+/**
+ * Build panel scoring prompt
+ * 
+ * @private
+ */
+const MAX_TRANSCRIPT_CHARS = 14000;
+
+function _buildPanelScoringPrompt(job_id, jd, l1_transcripts, l2_rejection_reasons) {
+  const full = l1_transcripts.map((t, i) => `Transcript ${i + 1}:\n${t}`).join('\n\n');
+  const transcriptText = full.length > MAX_TRANSCRIPT_CHARS
+    ? full.substring(0, MAX_TRANSCRIPT_CHARS) + '\n[... transcript truncated for scoring ...]'
+    : full;
+  const reasonsText = l2_rejection_reasons.length > 0
+    ? `\n\nL2 Rejection Reasons:\n${l2_rejection_reasons.map((r, i) => `${i + 1}. ${r}`).join('\n')}`
+    : '';
+
+  const alignmentRuleIntro = reasonsText.length === 0
+    ? `For "Rejection Validation Alignment": Since this candidate was SELECTED (no rejection reasons), score this dimension based on how thoroughly the panel member validated the candidate's key strengths and mandatory skills to confirm they are indeed a top-tier hire.`
+    : `For "Rejection Validation Alignment": First, independently determine the Probing Depth verdict (NO_PROBING / SURFACE_PROBING / DEEP_PROBING) by scanning the transcript for evidence of the panel probing the L2 rejection reasons listed above. Then score this dimension strictly using that self-derived verdict:`;
+
+  return `/no_think
+You are evaluating PANEL EFFICIENCY — how well the INTERVIEWER/PANEL probed the candidate.
+Focus on the INTERVIEWER's questions and probing depth, NOT the candidate's answers.
+
+Job ID: ${job_id}
+
+Job Description:
+${jd}
+
+${transcriptText}${reasonsText}
+
+Score each dimension based on how thoroughly the PANEL covered it through their questions.
+CRITICAL SCORING MANDATE: You MUST award MAXIMUM points (e.g., 2.0/2.0, 1.0/1.0) if the panelist exhaustively satisfies the requirement. Do NOT artificially lower scores (e.g., giving 1.6 instead of 2.0) if the panelist did a perfect or highly professional job.
+NOISE ROBUSTNESS RULE: Ignore conversational noise, tangents, small talk, technical difficulties (audio/video dropouts), and interruptions (dogs barking, deliveries). Evaluate ONLY the depth and quality of the TECHNICAL PROBING. Do NOT penalize "time management" or "flow" if the actual technical questions asked were excellent.
+BEHAVIORAL/LEADERSHIP RULE: Do NOT score generic architecture or project background questions under Behavioral Assessment. Behavioral Assessment is ONLY for conflict resolution, teamwork, or cultural fit. Leadership is ONLY for mentoring, team size, or strategic direction. If the question is about technical architecture, put it under Technical Depth or Scenario Evaluation.
+${alignmentRuleIntro}
+- If DEEP_PROBING: Score 2.0 for exhaustive and flawless probing. Score 1.8-1.9 for strong but slightly incomplete probing.
+- If SURFACE_PROBING: Score between 0.5 and 1.4 (e.g., 1.0 for basic probing, 1.4 for decent but not deep).
+- If NO_PROBING: Score between 0.0 and 0.4 (e.g., 0.0 for missing it entirely, 0.2 for a very faint, incidental mention).
+Do not just give round numbers; evaluate the exact quality of the alignment.
+Each dimension has its own maximum score — score within that range ONLY.
+
+Return ONLY a valid JSON object (no extra text):
+{
+  "job_id": "${job_id}",
+  "score": <sum of all category scores>,
+  "confidence": <0-1>,
+  "categories": {
+    "Mandatory Skill Coverage": <0 to 2.0>,
+    "Technical Depth": <0 to 2.0>,
+    "Rejection Validation Alignment": <0 to 2.0>,
+    "Scenario / Risk Evaluation": <0 to 1.0>,
+    "Framework Knowledge": <0 to 1.0>,
+    "Hands-on Validation": <0 to 1.0>,
+    "Leadership Evaluation": <0 to 0.5>,
+    "Behavioral Assessment": <0 to 0.5>
+  },
+  "evidence": {
+    "Mandatory Skill Coverage": ["Interviewer question or probing statement that covered this dimension"],
+    "Technical Depth": ["Interviewer question or probing statement"],
+    "Rejection Validation Alignment": ["Interviewer question or probing statement targeting the specific rejection reasons"],
+    "Scenario / Risk Evaluation": ["Interviewer question or probing statement"],
+    "Framework Knowledge": ["Interviewer question or probing statement"],
+    "Hands-on Validation": ["Interviewer question or probing statement"],
+    "Leadership Evaluation": ["Interviewer question or probing statement"],
+    "Behavioral Assessment": ["Interviewer question or probing statement"]
+  },
+  "probing_verdict": "NO_PROBING|SURFACE_PROBING|DEEP_PROBING",
+  "l2_validation": {
+    "matches_evidence": true,
+    "notes": "brief notes"
+  }
+}
+
+IMPORTANT:
+- Evidence must only quote the INTERVIEWER/PANEL lines (lines starting with 'Interviewer:' or 'Panel:' or specific interviewer names like 'Sarah:')
+- If a dimension was NOT covered by the panel, set its score to 0 and evidence array to []
+- The top-level "score" MUST equal the exact sum of all category scores`;
+}
+
+/**
+ * Build L2 validation prompt
+ * 
+ * @private
+ */
+function _buildL2ValidationPrompt(job_id, l2_reason, l1_transcripts) {
+  const full = l1_transcripts.map((t, i) => `Transcript ${i + 1}:\n${t}`).join('\n\n');
+  const transcriptText = full.length > MAX_TRANSCRIPT_CHARS
+    ? full.substring(0, MAX_TRANSCRIPT_CHARS) + '\n[... transcript truncated for L2 validation ...]'
+    : full;
+
+  return `/no_think
+Validate this L2 rejection reason against L1 transcripts.
+
+Job ID: ${job_id}
+L2 Rejection Reason: ${l2_reason}
+
+${transcriptText}
+
+Return a JSON object with:
+{
+  "job_id": "${job_id}",
+  "probing_verdict": "NO_PROBING|SURFACE_PROBING|DEEP_PROBING",
+  "evidence": [
+    {
+      "quote": "supporting quote from transcript",
+      "source": "transcript_1:line_range"
+    }
+  ],
+  "justifications": {
+    "${String(l2_reason).split(',')[0].trim()}": {
+      "summary": "One-line justification of where/how the panel member probed this area.",
+      "points": ["Specific transcript point 1", "Specific transcript point 2"]
+    }
+  },
+  "confidence": <0-1>,
+  "notes": "brief validation verdict"
+}`;
+}
+
+/**
+ * Call LLM API — uses shared llmClient (Ollama → GROQ → Mistral)
+ *
+ * @private
+ */
+async function _callGroqWithRetry(userPrompt, systemPrompt, maxTokens = 1500) {
+  const { callLLM, getProvider } = require('./llmClient');
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ];
+  try {
+    return await callLLM(messages, { temperature: 0.2, maxTokens, think: false });
+  } catch (error) {
+    const provider = getProvider() || 'LLM';
+    const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+    console.error(`[PanelEval] ${provider} request failed:`, detail);
+    if (error.response?.status === 429) {
+      throw new Error(`${provider} rate limit (429) — validation temporarily unavailable. Please try again later.`);
+    }
+    if (error.response?.status === 404) {
+      throw new Error(`${provider} 404 — model not found or endpoint unavailable. Detail: ${detail}`);
+    }
+    throw new Error(`${provider} request failed: ${detail}`);
+  }
+}
+
+/**
+ * Parse and validate panel score response
+ * 
+ * @private
+ */
+function _parseAndValidatePanelScore(response, job_id) {
+  try {
+    // Robust JSON extraction: handle markdown code blocks, then balanced-brace scan
+    const text = String(response || '');
+    let jsonText = null;
+
+    // 1. Try explicit ```json ... ``` block
+    const jsonBlock = text.match(/```json\s*([\s\S]*?)```/i);
+    if (jsonBlock) {
+      jsonText = jsonBlock[1].trim();
+    } else {
+      // 2. Balanced-brace scan for first complete JSON object
+      const firstBrace = text.indexOf('{');
+      if (firstBrace !== -1) {
+        let idx = firstBrace, depth = 0, inString = false, escape = false, endIdx = -1;
+        while (idx < text.length) {
+          const ch = text[idx];
+          if (escape) { escape = false; }
+          else if (ch === '\\') { escape = true; }
+          else if (ch === '"') { inString = !inString; }
+          else if (!inString) {
+            if (ch === '{') depth++;
+            else if (ch === '}') { depth--; if (depth === 0) { endIdx = idx; break; } }
+          }
+          idx++;
+        }
+        if (endIdx !== -1) jsonText = text.slice(firstBrace, endIdx + 1);
+      }
+    }
+
+    if (!jsonText) {
+      throw new Error('No JSON found in response');
+    }
+
+    const parsed = JSON.parse(jsonText);
+
+    // Ensure job_id matches
+    if (!parsed.job_id) {
+      parsed.job_id = job_id;
+    }
+
+    // Recalculate score as SUM of category scores (authoritative)
+    if (parsed.categories) {
+      let sum = 0;
+      for (const [dim, config] of Object.entries(PANEL_DIMENSIONS)) {
+        const catScore = parsed.categories[dim] || 0;
+        // Clamp each dimension score to its maximum
+        parsed.categories[dim] = Math.min(parseFloat(catScore.toFixed(2)), config.max);
+        sum += parsed.categories[dim];
+      }
+      parsed.score = Math.round(sum * 10) / 10;
+    }
+
+    // Ensure confidence is present
+    if (!parsed.confidence) {
+      parsed.confidence = 0.7; // Default confidence
+    }
+
+    // Helper to unescape HTML entities that LLMs sometimes generate
+    const unescapeHtml = (str) => {
+      if (typeof str !== 'string') return str;
+      return str.replace(/&#039;/g, "'")
+                .replace(/&quot;/g, '"')
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>');
+    };
+
+    // Recursively clean strings in the parsed object
+    const cleanObjectStrings = (obj) => {
+      if (Array.isArray(obj)) {
+        for (let i = 0; i < obj.length; i++) {
+          if (typeof obj[i] === 'string') obj[i] = unescapeHtml(obj[i]);
+          else if (typeof obj[i] === 'object' && obj[i] !== null) cleanObjectStrings(obj[i]);
+        }
+      } else if (typeof obj === 'object' && obj !== null) {
+        for (const key in obj) {
+          if (typeof obj[key] === 'string') obj[key] = unescapeHtml(obj[key]);
+          else if (typeof obj[key] === 'object' && obj[key] !== null) cleanObjectStrings(obj[key]);
+        }
+      }
+    };
+    
+    cleanObjectStrings(parsed);
+
+    // Validate structure
+    _validatePanelStructure(parsed);
+
+    return parsed;
+  } catch (error) {
+    console.error('Error parsing panel score:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Parse L2 validation response
+ * 
+ * @private
+ */
+function _parseL2ValidationResponse(response) {
+  try {
+    // Robustly extract the first balanced JSON object from the response text
+    const text = String(response || '');
+    const firstBrace = text.indexOf('{');
+    if (firstBrace === -1) {
+      throw new Error('No JSON object start found in response');
+    }
+
+    let idx = firstBrace;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let endIdx = -1;
+
+    while (idx < text.length) {
+      const ch = text[idx];
+
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = !inString;
+      } else if (!inString) {
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) {
+            endIdx = idx;
+            break;
+          }
+        }
+      }
+
+      idx++;
+    }
+
+    if (endIdx === -1) {
+      throw new Error('No balanced JSON object found in response');
+    }
+
+    const jsonText = text.slice(firstBrace, endIdx + 1);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (e) {
+      // Provide a helpful error including a snippet
+      throw new Error(`Failed to parse JSON extracted from response: ${e.message}`);
+    }
+
+    // Normalize the probing_verdict field - convert underscores to spaces then uppercase
+    if (parsed && parsed.probing_verdict) {
+      parsed.probing_verdict = String(parsed.probing_verdict).replace(/_/g, ' ').toUpperCase();
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error('Error parsing L2 validation:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Validate panel evaluation structure
+ *
+ * @private
+ */
+function _validatePanelStructure(obj) {
+  // Validate required fields
+  if (!obj.job_id || typeof obj.job_id !== 'string') {
+    throw new Error('Invalid or missing job_id');
+  }
+
+  if (typeof obj.score !== 'number' || obj.score < 0 || obj.score > MAX_PANEL_SCORE + 0.5) {
+    throw new Error(`Score must be between 0 and ${MAX_PANEL_SCORE}`);
+  }
+
+  if (typeof obj.confidence !== 'number' || obj.confidence < 0 || obj.confidence > 1) {
+    throw new Error('Confidence must be between 0 and 1');
+  }
+
+  if (!obj.categories || typeof obj.categories !== 'object') {
+    throw new Error('Invalid categories object');
+  }
+
+  // Accept both array (legacy) and object (per-dimension) evidence formats
+  if (!obj.evidence || (typeof obj.evidence !== 'object')) {
+    obj.evidence = {};
+  }
+
+  if (!['NO_PROBING', 'SURFACE_PROBING', 'DEEP_PROBING'].includes(obj.probing_verdict)) {
+    obj.probing_verdict = 'SURFACE_PROBING'; // Default
+  }
+
+  if (!obj.l2_validation || typeof obj.l2_validation !== 'object') {
+    obj.l2_validation = { matches_evidence: false, notes: 'Not validated' };
+  }
+}
+
+/**
+ * Generate a refined JD skill classification using the ICEO prompt
+ * @private
+ */
+async function _generateRefinedJD(jd) {
+  let rawContent = '';
+  try {
+    const userPrompt = `/no_think
+Extract skill keywords from this JD into JSON with keys: key_skills, mandatory_skills, good_to_have_skills.
+Output ONLY the JSON object, nothing else.
+
+Job Description:
+${jd}`;
+    rawContent = await _callGroqWithRetry(userPrompt, JD_REFINE_SYSTEM_PROMPT, 600);
+    
+    // Aggressively strip thinking/reasoning blocks and preamble
+    let clean = rawContent
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .replace(/<\/think>/gi, '')
+      .trim();
+    
+    // --- Attempt 1: JSON parsing ---
+    let parsedJson = null;
+    const jsonBlock = clean.match(/```json\s*([\s\S]*?)```/i);
+    if (jsonBlock) {
+      try {
+        parsedJson = JSON.parse(jsonBlock[1].trim());
+      } catch (_) { /* fall through */ }
+    }
+    
+    if (!parsedJson) {
+      const firstBrace = clean.indexOf('{');
+      const lastBrace = clean.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        try {
+          parsedJson = JSON.parse(clean.substring(firstBrace, lastBrace + 1));
+        } catch (_) { /* fall through */ }
+      }
+    }
+    
+    if (parsedJson && (parsedJson.key_skills || parsedJson.mandatory_skills || parsedJson.good_to_have_skills)) {
+      // Shared noise filter logic
+      const isNoise = (s) => {
+        if (!s || s.length <= 1) return true;
+        const lower = s.toLowerCase();
+        // Skip sentences or reasoning-like strings
+        if (s.split(/\s+/).length > 6) return true; 
+        const NOISE_WORDS = ['mandatory', 'also', 'suggests', 'implies', 'means', 'should', 'would', 'could', 'think', 'believe', 'actually', 'however', 'but the', 'the jd', 'the role'];
+        if (NOISE_WORDS.some(p => lower.includes(p)) && (lower.includes('.') || lower.includes(' '))) return true;
+        return false;
+      };
+
+      const cleanArray = (arr) => {
+        if (!Array.isArray(arr)) return [];
+        return arr
+          .map(s => typeof s === 'string' ? s.trim() : '')
+          .filter(s => !isNoise(s))
+          .map(s => s.replace(/[.,;:]+$/, '').replace(/^and\s+/i, '').replace(/\s+and$/i, '').trim());
+      };
+
+      return {
+        key_skills: cleanArray(parsedJson.key_skills),
+        mandatory_skills: cleanArray(parsedJson.mandatory_skills),
+        good_to_have_skills: cleanArray(parsedJson.good_to_have_skills),
+        raw: rawContent
+      };
+    }
+    
+    // --- Attempt 2: Text-based fallback (extract from bulleted markdown) ---
+    console.warn('[JD Refine] JSON parse failed, attempting text-based extraction...');
+    return _parseJdSkillsFromText(clean, rawContent);
+  } catch (err) {
+    console.error('_generateRefinedJD error:', err.message);
+    // Last resort: try to parse whatever raw content we got
+    if (rawContent) {
+      const stripped = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<\/think>/gi, '').trim();
+      return _parseJdSkillsFromText(stripped, rawContent);
+    }
+    return { key_skills: [], mandatory_skills: [], good_to_have_skills: [], raw: '' };
+  }
+}
+
+/**
+ * Fallback text-based parser for JD skills when JSON parsing fails.
+ * Extracts skills from markdown bulleted lists with section headers.
+ * @private
+ */
+function _parseJdSkillsFromText(text, rawContent) {
+  const NOISE_PHRASES = [
+    'wait,', 'hmm,', 'i need', 'the user', 'so that', 'maybe', 'perhaps',
+    'actually', 'however', 'but the', 'deep understanding', 'experience with',
+    'the mention', 'this is', 'might struggle', 'another key', 'for the role',
+    'the candidate', 'the jd', 'the role', 'the panel', 'specific database',
+    'it is', "it's", 'which', 'that is', 'let me', 'need to check',
+    'the rules', 'the example', 'inference', 'thinking about', "i'm", 'i think',
+    'okay,', 'let\'s', 'first,', 'now,', 'so,', 'in the', 'from the',
+    'this suggests', 'this implies', 'this means', 'should be', 'would be',
+    'could be', 'can be', 'there is', 'there are', 'these are', 'those are',
+    'compiling', 'categorizing', 'listed under', 'mentioned in', 'getting complicated',
+    'mandatory', 'also', 'required by', 'mentioned earlier'
+  ];
+
+  const seenSkills = new Set();
+  function extractBullets(block) {
+    if (!block) return [];
+    let lines = block.trim().split('\n');
+    if (lines.length === 1 && (lines[0].includes(',') || lines[0].includes(';'))) {
+      lines = lines[0].split(/[,;]/);
+    }
+    return lines
+      .map(l => l.replace(/^[\s*•\-]+/, '').replace(/^\d+\.\s*/, '').trim())
+      .filter(l => {
+        if (!l || l.length <= 1) return false;
+        const lower = l.toLowerCase();
+        if (l.split(/\s+/).length > 8) return false;
+        if (NOISE_PHRASES.some(p => lower.includes(p))) return false;
+        if (lower === 'and' || lower === '&') return false;
+        if (seenSkills.has(lower)) return false;
+        seenSkills.add(lower);
+        return true;
+      })
+      .map(l => l.replace(/[.,;:]+$/, '').replace(/^and\s+/i, '').replace(/\s+and$/i, '').trim())
+      .filter(l => l.length > 1);
+  }
+
+  // Try to find section headers
+  const keyMatch = text.match(/(?:[#*]*\s*)?Key\s*Skills\s*[:*]*\s*([\s\S]*?)(?=(?:[#*]*\s*)?(?:Mandatory|Good\s*To\s*Have)\s*Skills|$)/i);
+  const mandatoryMatch = text.match(/(?:[#*]*\s*)?Mandatory\s*Skills\s*[:*]*\s*([\s\S]*?)(?=(?:[#*]*\s*)?(?:Key|Good\s*To\s*Have)\s*Skills|$)/i);
+  const goodMatch = text.match(/(?:[#*]*\s*)?Good\s*To\s*Have\s*(?:Skills)?\s*[:*]*\s*([\s\S]*?)(?=(?:[#*]*\s*)?(?:Key|Mandatory)\s*Skills|$)/i);
+
+  const key_skills = extractBullets(keyMatch?.[1]);
+  const mandatory_skills = extractBullets(mandatoryMatch?.[1]);
+  const good_to_have_skills = extractBullets(goodMatch?.[1]);
+
+  return { key_skills, mandatory_skills, good_to_have_skills, raw: rawContent };
+}
+
+
+/**
+ * Generate a natural-language panel summary paragraph
+ * @private
+ */
+async function _generatePanelSummary(evaluation, jd, l2_rejection_reasons = [], gapAnalysis = null, l2ValidationResult = null) {
+  try {
+    // Derive score category from percentage of MAX_PANEL_SCORE
+    const scorePct = evaluation.score / MAX_PANEL_SCORE;
+    const scoreCategory = evaluation.score_category ||
+      (scorePct >= 0.8 ? 'Good' : scorePct >= 0.5 ? 'Moderate' : 'Poor');
+
+    // Label each dimension ACCEPTABLE (>=50% of its max) or WEAK (<50%)
+    const catLines = Object.entries(evaluation.categories || {})
+      .map(([dim, score]) => {
+        const max = PANEL_DIMENSIONS[dim]?.max ?? 1;
+        const label = score >= max * 0.5 ? 'ACCEPTABLE' : 'WEAK';
+        return `  - ${dim}: ${score}/${max} — ${label}`;
+      })
+      .join('\n');
+
+    const l2Verdict = l2ValidationResult?.success && l2ValidationResult?.validation?.probing_verdict
+      ? l2ValidationResult.validation.probing_verdict
+      : null;
+    const l2Notes = l2ValidationResult?.success && l2ValidationResult?.validation?.notes
+      ? l2ValidationResult.validation.notes
+      : '';
+
+    const rejectionContext = l2_rejection_reasons.length > 0
+      ? `\nL2 Rejection Reasons (why L2 rejected the candidate that L1 had selected):\n${l2_rejection_reasons.map(r => `- ${r}`).join('\n')}${l2Verdict ? `\nL1 Probing Verdict for these reasons: ${l2Verdict}${l2Notes ? ' — ' + l2Notes : ''}` : ''}`
+      : '';
+
+    const gapContext = gapAnalysis
+      ? `\nTop Identified Gaps Point:\n${gapAnalysis.split('\n')[0]}`
+      : '';
+
+    const userPrompt = `/no_think
+Panel Evaluation Results:
+- Overall Score: ${evaluation.score} / ${MAX_PANEL_SCORE}
+- Score Category: ${scoreCategory}
+- Dimensions:
+${catLines}${rejectionContext}${gapContext}
+
+Job Description Context:
+${String(jd || '').substring(0, 400)}
+
+Generate a detailed, multi-point bulleted summary covering panel behavior, interview process quality, rejection validation effectiveness, and at least one identification gap.`;
+
+    const summary = await _callGroqWithRetry(userPrompt, PANEL_SUMMARY_SYSTEM_PROMPT, 1000);
+    return summary.trim();
+  } catch (err) {
+    console.error('_generatePanelSummary error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Generate a specialized gap analysis summary
+ * @private
+ */
+async function _generateGapAnalysis(evaluation, jd, l2_rejection_reasons) {
+  try {
+    if (!l2_rejection_reasons || l2_rejection_reasons.length === 0) {
+      return null;
+    }
+
+    const catLines = Object.entries(evaluation.categories || {})
+      .map(([dim, score]) => {
+        const max = PANEL_DIMENSIONS[dim]?.max ?? 1;
+        return `  - ${dim}: ${score}/${max}`;
+      })
+      .join('\n');
+
+    const userPrompt = `/no_think
+Analyse the GAPS in the panel member's interview probing.
+    
+Rejection Reasons Provided:
+${l2_rejection_reasons.map(r => `- ${r}`).join('\n')}
+
+Panel Scoring Gaps:
+${catLines}
+
+Job Description Context:
+${String(jd || '').substring(0, 500)}
+
+Evidence of Panel Questioning:
+${JSON.stringify(evaluation.evidence || {}, null, 2)}
+
+Provide a bulleted list analyzing why the panel failed to probe deep enough to catch these rejection reasons earlier, and providing specific, friendly, and neat recommendations for the interviewer to improve. Tone MUST be professional and supportive for HR feedback.`;
+
+    const summary = await _callGroqWithRetry(userPrompt, GAP_ANALYSIS_SYSTEM_PROMPT, 600);
+    return summary.trim();
+  } catch (err) {
+    console.error('_generateGapAnalysis error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Store evaluation result in MongoDB
+ * @private
+ */
+async function _storeEvaluationInDB(evaluationData) {
+  try {
+    const { getDb } = require('./mongoClient');
+    const db = await getDb();
+    const collection = db.collection('panel_evaluations');
+
+    const document = {
+      'Job Interview ID': evaluationData.job_id,
+      'Panel Name': evaluationData.panel_name,
+      'Candidate Name': evaluationData.candidate_name,
+      score: evaluationData.score,
+      confidence: evaluationData.confidence,
+      categories: evaluationData.categories,
+      evidence: evaluationData.evidence,
+      l2_validation: evaluationData.l2_validation,
+      l2_detailed_validation: evaluationData.l2_detailed_validation || null,
+      l2_rejection_reasons: evaluationData.l2_rejection_reasons || [],
+      l1_transcript: evaluationData.l1_transcript || '',
+      refined_jd: evaluationData.refined_jd || null,
+      panel_summary: evaluationData.panel_summary || null,
+      gap_analysis: evaluationData.gap_analysis || null,
+      panel_member_id: evaluationData.panel_member_id || '',
+      panel_member_email: evaluationData.panel_member_email || '',
+      evaluated_at: new Date().toISOString(),
+      created_at: new Date()
+    };
+
+    await collection.insertOne(document);
+    console.log(`Stored evaluation for Job Interview ID: ${evaluationData.job_id}`);
+  } catch (error) {
+    console.error('Error storing evaluation in DB:', error.message);
+    // Don't throw - evaluation was successful, just log the storage error
+  }
+}
+
+module.exports = {
+  performPanelEvaluation,
+  validateL2Rejection,
+  PANEL_DIMENSIONS
+};

@@ -1,0 +1,61 @@
+Job Interview ID,Candidate Name,role,panel_member_id,Panel Name,panel_member_email,JD,L1_decision,L1 Transcript
+1001,Gokul,Full Stack Python Developer,P901,Ananya,ananya.a@panel.ai,"Expertise in Python, Django, and Redis; Strong knowledge of Microservices and Distributed Systems; Experience with production troubleshooting and OOM debugging; Leadership in technical decision making.",Select,"Ananya: Hello Gokul, we are here for the 1001 interview. Let's start with your origin and background briefly.
+Gokul: I'm from Bangalore. I've been working as a Python dev for 4 years.
+Ananya: Great. Let's move to the technical deep dive.
+Ananya: Explain how the Python Global Interpreter Lock (GIL) affects multi-threaded CPU-bound tasks vs I/O-bound tasks.
+Gokul: I know it locks things, but I'm not clear on the thread switching internals for CPU tasks.
+Ananya: Follow-up: If you have a 16-core machine, how would you leverage parallelism in a Python script given the GIL?
+Gokul: I would use threading, but I'm not sure if it scales across cores because of the lock.
+Ananya: FRAMEWORK Master: Explain how Django's Middleware process_request vs process_view differs in terms of view execution and exception handling.
+Gokul: I think they run in order, but I'm not sure about the return values.
+Ananya: In a high-traffic app, where would you implement a custom rate-limiter—in the middleware or at the Nginx level? Why?
+Gokul: I'd put it in the code because it's easier to write.
+Ananya: SCENARIO: Your production Redis cache is hitting 100% memory and causing evictions, leading to a database query storm. How do you triage this in real-time?
+Gokul: I'd probably just clear the cache or restart Redis.
+Ananya: Deep Probe: If clearing the cache causes another spike in DB load, what specific eviction policies or 'circuit breaker' patterns would you check in the infra?
+Gokul: I've heard of the patterns but I don't know how to see those stats in Redis.
+Ananya: HANDS-ON: Walk me through how you would use cProfile or a memory profiler like 'memory_profiler' to find a slow function in a large Django app.
+Gokul: I usually just add print statements to measure time.
+Ananya: If the slowdown is due to 'N+1 queries' in the Django ORM, how do you identify the specific model relationship causing it without looking at every query log?
+Gokul: I haven't used advanced profilers for that.
+Ananya: LEADERSHIP: How do you handle a senior stakeholder who demands a feature that ignores core security protocols?
+Gokul: I'd probably just try to do it and fix security later.
+Ananya: If that choice leads to a data breach audit, how do you justify the decision vs proposing an alternative architectural fix?
+Gokul: I haven't really been in that situation.
+Ananya: BEHAVIORAL: Talk about a time a team project failed. What was your role in the recovery?
+Gokul: The project was late, so I just worked extra hours. I don't think we recovered it fully.
+Ananya: How did you document the lessons learned to ensure the next sprint didn't repeat the same error?
+Gokul: We didn't really document it.
+Ananya: Final check on your framework MASTERY—what's the internal low-level implementation for that specific approach?
+Gokul: I'm not clear on those internal low-level details.
+Ananya: Thank you for your time."
+1001,Nishanth,Full Stack Python Developer,P902,Swathi,swathi.s@panel.ai,"Expertise in Python, Django, and Redis; Strong knowledge of Microservices and Distributed Systems; Experience with production troubleshooting and OOM debugging; Leadership in technical decision making.",Select,"Swathi: Hello Nishanth, we are here for the 1001 interview. Let's start with your origin and background briefly.
+Nishanth: I'm from Bangalore. I've been working as a Python dev for 4 years.
+Swathi: Great. Let's move to the technical deep dive.
+Swathi: Explain how the Python Global Interpreter Lock (GIL) affects multi-threaded CPU-bound tasks vs I/O-bound tasks.
+Nishanth: I know it locks things, but I'm not clear on the thread switching internals for CPU tasks.
+Swathi: Follow-up: If you have a 16-core machine, how would you leverage parallelism in a Python script given the GIL?
+Nishanth: I would use threading, but I'm not sure if it scales across cores because of the lock.
+Swathi: FRAMEWORK Master: Explain how Django's Middleware process_request vs process_view differs in terms of view execution and exception handling.
+Nishanth: I think they run in order, but I'm not sure about the return values.
+Swathi: In a high-traffic app, where would you implement a custom rate-limiter—in the middleware or at the Nginx level? Why?
+Nishanth: I'd put it in the code because it's easier to write.
+Swathi: SCENARIO: Your production Redis cache is hitting 100% memory and causing evictions, leading to a database query storm. How do you triage this in real-time?
+Nishanth: I'd probably just clear the cache or restart Redis.
+Swathi: Deep Probe: If clearing the cache causes another spike in DB load, what specific eviction policies or 'circuit breaker' patterns would you check in the infra?
+Nishanth: I've heard of the patterns but I don't know how to see those stats in Redis.
+Swathi: HANDS-ON: Walk me through how you would use cProfile or a memory profiler like 'memory_profiler' to find a slow function in a large Django app.
+Nishanth: I usually just add print statements to measure time.
+Swathi: If the slowdown is due to 'N+1 queries' in the Django ORM, how do you identify the specific model relationship causing it without looking at every query log?
+Nishanth: I haven't used advanced profilers for that.
+Swathi: LEADERSHIP: How do you handle a senior stakeholder who demands a feature that ignores core security protocols?
+Nishanth: I'd probably just try to do it and fix security later.
+Swathi: If that choice leads to a data breach audit, how do you justify the decision vs proposing an alternative architectural fix?
+Nishanth: I haven't really been in that situation.
+Swathi: BEHAVIORAL: Talk about a time a team project failed. What was your role in the recovery?
+Nishanth: The project was late, so I just worked extra hours. I don't think we recovered it fully.
+Swathi: How did you document the lessons learned to ensure the next sprint didn't repeat the same error?
+Nishanth: We didn't really document it.
+Swathi: Final check on your framework MASTERY—what's the internal low-level implementation for that specific approach?
+Nishanth: I'm not clear on those internal low-level details.
+Swathi: Thank you for your time."
