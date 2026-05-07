@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash --noprofile --norc -c \"git status\")",
+      "Bash(cmd.exe /c \"git --version\")"
+    ]
+  }
+}
