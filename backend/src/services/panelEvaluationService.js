@@ -151,16 +151,18 @@ async function performPanelEvaluation(input) {
       evaluation.score = Math.round(correctedSum * 10) / 10;
     }
 
-    // Gap analysis, refined JD, and panel summary are all independent — run in parallel
-    const [gapAnalysis, refinedJd, panelSummary] = await Promise.all([
+    // Gap analysis, refined JD, panel summary, and moderation are all independent — run in parallel
+    const [gapAnalysis, refinedJd, panelSummary, moderationResult] = await Promise.all([
       _generateGapAnalysis(evaluation, jd, l2_rejection_reasons),
       _generateRefinedJD(jd),
       _generatePanelSummary(evaluation, jd, l2_rejection_reasons, null, l2ValidationResult),
+      _runModeration(l1_transcripts.join('\n\n'), job_id),
     ]);
 
     evaluation.panel_summary = panelSummary;
     evaluation.gap_analysis = gapAnalysis;
     evaluation.refined_jd = refinedJd;
+    evaluation.moderation = moderationResult;
 
     // 7. Store in DB
     await _storeEvaluationInDB({
@@ -172,6 +174,7 @@ async function performPanelEvaluation(input) {
       refined_jd: refinedJd,
       panel_summary: panelSummary,
       gap_analysis: gapAnalysis,
+      moderation: moderationResult,
       l2_detailed_validation: l2ValidationResult?.success ? l2ValidationResult.validation : null,
       panel_member_id,
       panel_member_email
@@ -183,6 +186,7 @@ async function performPanelEvaluation(input) {
       refined_jd: refinedJd,
       panel_summary: panelSummary,
       gap_analysis: gapAnalysis,
+      moderation: moderationResult,
       timestamp: new Date().toISOString()
     };
   } catch (error) {
@@ -858,6 +862,7 @@ async function _storeEvaluationInDB(evaluationData) {
       refined_jd: evaluationData.refined_jd || null,
       panel_summary: evaluationData.panel_summary || null,
       gap_analysis: evaluationData.gap_analysis || null,
+      moderation: evaluationData.moderation || null,
       panel_member_id: evaluationData.panel_member_id || '',
       panel_member_email: evaluationData.panel_member_email || '',
       evaluated_at: new Date().toISOString(),
@@ -869,6 +874,24 @@ async function _storeEvaluationInDB(evaluationData) {
   } catch (error) {
     console.error('Error storing evaluation in DB:', error.message);
     // Don't throw - evaluation was successful, just log the storage error
+  }
+}
+
+/**
+ * Run moderation analysis on transcript
+ * @private
+ */
+async function _runModeration(transcript, job_id) {
+  try {
+    const { analyzeInterviewModeration } = require('./moderationService');
+    const result = await analyzeInterviewModeration({
+      l1_transcript: transcript,
+      job_id
+    });
+    return result.success ? result.moderation : null;
+  } catch (err) {
+    console.error('_runModeration error:', err.message);
+    return null; // Don't fail the whole evaluation if moderation fails
   }
 }
 
