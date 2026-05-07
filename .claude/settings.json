@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(bash --noprofile --norc -c \"git status\")",
-      "Bash(cmd.exe /c \"git --version\")"
+      "Bash(cmd.exe /c \"git --version\")",
+      "Bash(node test-moderation.js)",
+      "Bash(node \"d:/All_Projects/panel-pulse-ai/test-moderation.js\")",
+      "Bash(powershell.exe -Command \"cd 'd:\\\\All_Projects\\\\panel-pulse-ai'; node diagnose-moderation.js\")",
+      "Bash(powershell.exe -NoProfile -Command \"cd 'd:\\\\All_Projects\\\\panel-pulse-ai'; git status --short\")"
     ]
   }
 }
