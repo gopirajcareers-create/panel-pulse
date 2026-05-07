@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(netstat -ano)",
+      "Bash(findstr :3000)",
+      "Bash(taskkill /IM node.exe /F)",
+      "Bash(powershell -Command \"Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force\")",
+      "Bash(npm start *)",
+      "Bash(curl -s http://localhost:3000/api/v1/health)",
+      "Bash(npm run *)",
+      "Bash(node test-mistral.js)"
+    ]
+  }
+}

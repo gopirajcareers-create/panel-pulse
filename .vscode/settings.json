@@ -1,4 +1,5 @@
 {
+    "postman.settings.dotenv-detection-notification-visibility": false,
     "chat.tools.terminal.autoApprove": {
         "npm run dev": true
     }
