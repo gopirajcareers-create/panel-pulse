@@ -15,6 +15,7 @@ interface EvaluationState {
   panelSummary: string | null;
   gapAnalysis: string | null;
   refinedJd: any | null;
+  moderation: any | null;
   isLoading: boolean;
   setJobId: (id: string) => void;
   setEvaluationId: (id: string) => void;
@@ -41,6 +42,7 @@ export const useEvaluationStore = create<EvaluationState>((set) => ({
   panelSummary: null,
   gapAnalysis: null,
   refinedJd: null,
+  moderation: null,
   isLoading: false,
   setJobId: (id) => set({ jobId: id }),
   setEvaluationId: (id) => set({ evaluationId: id }),
@@ -59,6 +61,7 @@ export const useEvaluationStore = create<EvaluationState>((set) => ({
       panelSummary: (score as any).panelSummary || (score as any).panel_summary || null,
       gapAnalysis: (score as any).gapAnalysis || (score as any).gap_analysis || null,
       refinedJd: (score as any).refinedJd || (score as any).refined_jd || null,
+      moderation: (score as any).moderation || null,
     }),
   setL2Validation: (result) => set({ l2ValidationResult: result }),
   setLoading: (v) => set({ isLoading: v }),
@@ -77,6 +80,7 @@ export const useEvaluationStore = create<EvaluationState>((set) => ({
       panelSummary: null,
       gapAnalysis: null,
       refinedJd: null,
+      moderation: null,
       isLoading: false,
     }),
 }));

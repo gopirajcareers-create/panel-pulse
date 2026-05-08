@@ -5,13 +5,14 @@ import DimensionGrid from '@/components/features/evaluation/DimensionGrid';
 import { JdSkillsCard } from '@/components/features/evaluation/JdSkillsCard';
 import { PanelSummaryCard } from '@/components/features/evaluation/PanelSummaryCard';
 import { L2ValidatorCard } from '@/components/features/l2-validation/L2ValidatorCard';
+import { ModerationCard } from '@/components/features/evaluation/ModerationCard';
 import { EmptyState } from '@/components/common/EmptyState';
 import { useEvaluationStore } from '@/lib/stores/evaluation.store';
 import { dashboardApi } from '@/lib/api/dashboard.api';
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
-const REVEAL_SECTIONS = ['score', 'dimensions', 'summary', 'l2'] as const;
+const REVEAL_SECTIONS = ['score', 'dimensions', 'summary', 'l2', 'moderation'] as const;
 type RevealSection = typeof REVEAL_SECTIONS[number];
 
 function useSectionReveal(hasData: boolean) {
@@ -22,10 +23,11 @@ function useSectionReveal(hasData: boolean) {
     if (!hasData || triggered.current) return;
     triggered.current = true;
     const delays: { key: RevealSection; delay: number }[] = [
-      { key: 'score',      delay: 0   },
-      { key: 'dimensions', delay: 350 },
-      { key: 'summary',    delay: 750 },
+      { key: 'score',      delay: 0    },
+      { key: 'dimensions', delay: 350  },
+      { key: 'summary',    delay: 750  },
       { key: 'l2',         delay: 1100 },
+      { key: 'moderation', delay: 1450 },
     ];
     delays.forEach(({ key, delay }) => {
       setTimeout(() => setVisible(prev => new Set([...prev, key])), delay);
@@ -202,6 +204,15 @@ export default function ResultsPage() {
                 autoValidate={true}
                 jobId={displayJobId}
                 preComputedValidation={cachedEvaluation?.l2DetailedValidation ?? null}
+              />
+            </section>
+          )}
+
+          {/* Moderation Section - Always show if moderation data exists */}
+          {(cachedEvaluation?.moderation || useEvaluationStore.getState().moderation) && (
+            <section className={revealClass('moderation')}>
+              <ModerationCard
+                moderation={cachedEvaluation?.moderation || useEvaluationStore.getState().moderation}
               />
             </section>
           )}
