@@ -204,6 +204,7 @@ export const dashboardApi = {
         refinedJd: body.refinedJd ?? body.refined_jd ?? null,
         panelSummary: body.panelSummary ?? body.panel_summary ?? null,
         gapAnalysis: body.gapAnalysis ?? body.gap_analysis ?? null,
+        moderation: body.moderation ?? null,
         scoreCategory: (body.score ?? 0) >= 8 ? 'Good' : (body.score ?? 0) >= 5 ? 'Moderate' : 'Poor'
       };
     } catch (error) {

@@ -160,6 +160,7 @@ router.post('/score', async (req, res) => {
             refined_jd: result.refined_jd,
             panel_summary: result.panel_summary,
             gap_analysis: result.gap_analysis,
+            moderation: result.moderation,
             full_evaluation: result.evaluation,
             timestamp: result.timestamp
           }
@@ -680,6 +681,8 @@ router.get('/evaluation/:id', async (req, res) => {
         l1Transcript: evaluation.l1_transcript || '',
         refinedJd: evaluation.refined_jd || null,
         panelSummary: evaluation.panel_summary || null,
+        gapAnalysis: evaluation.gap_analysis || null,
+        moderation: evaluation.moderation || null,
         evaluatedAt: evaluation.evaluated_at
       },
       timestamp: new Date().toISOString()
