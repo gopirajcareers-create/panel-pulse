@@ -13,7 +13,7 @@
 const axios = require('axios');
 
 const OLLAMA_BASE  = (process.env.OLLAMA_BASE_URL  || '').replace(/\/$/, '');
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL_NAME || 'llama-3.3-70b-versatile';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL_NAME || 'qwen3:latest';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_MODEL   = process.env.GROQ_MODEL_NAME   || 'llama-3.3-70b-versatile';
@@ -84,7 +84,7 @@ async function callLLM(messages, { temperature = 0.2, maxTokens = 2000, think = 
         model   = OLLAMA_MODEL;
         headers = { 'Content-Type': 'application/json' };
         body    = { model, messages, stream: false, options: { temperature, num_predict: maxTokens }, think };
-        timeout = 180000;
+        timeout = 120000;
       } else if (currentProvider === 'groq') {
         apiUrl  = 'https://api.groq.com/openai/v1/chat/completions';
         model   = GROQ_MODEL;
