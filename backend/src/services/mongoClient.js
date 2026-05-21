@@ -8,24 +8,41 @@ async function connectToMongo() {
 
   const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/pp_db';
   const dbName = process.env.MONGODB_DB || 'pp_db';
-  
+
+  // Extended timeout and connection options for corporate networks
   client = new MongoClient(mongoUri, {
     maxPoolSize: 10,
-    serverSelectionTimeoutMS: 5000
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
+    socketTimeoutMS: 45000,
+    family: 4, // Force IPv4
+    retryWrites: true,
+    retryReads: true
   });
 
-  await client.connect();
-  console.log('✓ MongoDB connected');
-  
-  db = client.db(dbName);
-  
-  // Create vector index on panel_collection for hybrid search
-  await createVectorIndex();
+  try {
+    await client.connect();
+    console.log('✓ MongoDB connected');
 
-  // Ensure users collection indexes
-  await createUsersIndexes();
-  
-  return db;
+    db = client.db(dbName);
+
+    // Create vector index on panel_collection for hybrid search
+    await createVectorIndex();
+
+    // Ensure users collection indexes
+    await createUsersIndexes();
+
+    return db;
+  } catch (err) {
+    console.error('❌ MongoDB connection failed:', err.message);
+    if (err.message.includes('querySrv') || err.message.includes('ECONNREFUSED')) {
+      console.error('💡 Hint: DNS SRV lookup failed. This may be due to:');
+      console.error('   - Corporate firewall blocking MongoDB Atlas DNS queries');
+      console.error('   - VPN or proxy settings interfering with connection');
+      console.error('   - Try using standard connection string instead of mongodb+srv://');
+    }
+    throw err;
+  }
 }
 
 async function getDb() {

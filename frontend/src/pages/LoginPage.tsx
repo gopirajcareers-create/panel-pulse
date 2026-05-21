@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Code } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { ParticleBackground } from '@/components/ui/ParticleBackground';
 
@@ -14,10 +14,11 @@ const SSO_ERROR_MESSAGES: Record<string, string> = {
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, setUser } = useAuth();
   const [searchParams] = useSearchParams();
+  const [isDevLoading, setIsDevLoading] = useState(false);
 
-
+  const isDev = import.meta.env.DEV;
 
   useEffect(() => {
     if (user) navigate('/', { replace: true });
@@ -25,6 +26,30 @@ export default function LoginPage() {
 
   const ssoError = searchParams.get('error');
   const errorMessage = ssoError ? (SSO_ERROR_MESSAGES[ssoError] || 'Sign-in failed. Please try again.') : '';
+
+  const handleDevLogin = async () => {
+    setIsDevLoading(true);
+    try {
+      const apiUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+      const response = await fetch(`${apiUrl}/api/v1/auth/dev-login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+
+      if (response.ok) {
+        const userData = await response.json();
+        setUser(userData);
+        navigate('/', { replace: true });
+      } else {
+        console.error('Dev login failed');
+      }
+    } catch (error) {
+      console.error('Dev login error:', error);
+    } finally {
+      setIsDevLoading(false);
+    }
+  };
 
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden bg-bg-surface">
@@ -59,6 +84,18 @@ export default function LoginPage() {
           >
             Sign In
           </a>
+
+          {/* Dev Login Bypass - Only shown in development */}
+          {isDev && (
+            <button
+              onClick={handleDevLogin}
+              disabled={isDevLoading}
+              className="inline-flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-600/50 text-white font-medium text-sm px-6 py-2.5 rounded-full shadow-md transition-all duration-200 hover:scale-[1.03] active:scale-[0.98] w-full max-w-[280px]"
+            >
+              <Code className="w-4 h-4" />
+              {isDevLoading ? 'Logging in...' : 'Dev Login (Skip SSO)'}
+            </button>
+          )}
         </div>
       </div>
     </div>

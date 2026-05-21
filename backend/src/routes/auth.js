@@ -283,4 +283,29 @@ router.post('/logout', (req, res) => {
   return res.json({ message: 'Signed out.' });
 });
 
+// ── POST /api/v1/auth/dev-login ────────────────────────────────────────────
+// Development-only bypass (disabled in production)
+router.post('/dev-login', (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({ error: 'Dev login disabled in production.' });
+  }
+
+  const { email } = req.body || {};
+
+  // Default dev user if no email provided
+  const devEmail = email || 'dev@indium.tech';
+
+  const payload = {
+    email: devEmail,
+    firstName: 'Dev',
+    lastName: 'User',
+    empId: 'DEV001',
+    authMethod: 'dev_bypass',
+  };
+
+  issueSessionCookie(res, payload);
+  console.log(`[Auth] 🔓 Dev bypass login: ${devEmail}`);
+  return res.json(payload);
+});
+
 module.exports = router;
