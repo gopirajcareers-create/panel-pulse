@@ -12,6 +12,7 @@ import ChatPage from './pages/ChatPage';
 import PanelInsightsPage from './pages/PanelInsightsPage';
 import PanelProfilePage from './pages/PanelProfilePage';
 import NameExtractPage from './pages/NameExtractPage';
+import LoaderDemoPage from './pages/LoaderDemoPage';
 
 function App() {
   return (
@@ -39,6 +40,7 @@ function App() {
           <Route path="/panels" element={<ProtectedRoute><PanelInsightsPage /></ProtectedRoute>} />
           <Route path="/panels/:panelName" element={<ProtectedRoute><PanelProfilePage /></ProtectedRoute>} />
           <Route path="/smart-evaluate" element={<ProtectedRoute><NameExtractPage /></ProtectedRoute>} />
+          <Route path="/loader-demo" element={<ProtectedRoute><LoaderDemoPage /></ProtectedRoute>} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

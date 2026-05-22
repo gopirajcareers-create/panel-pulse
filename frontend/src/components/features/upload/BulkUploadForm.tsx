@@ -28,6 +28,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useBulkUpload, type EvaluationTask, type BulkParseError } from '@/hooks/use-bulk-upload';
+import { DocumentAnalysisLoader } from '@/components/common/DocumentAnalysisLoader';
 
 // ── File Drop Zone ────────────────────────────────────────────────────────────
 
@@ -420,21 +421,11 @@ export function BulkUploadForm() {
               <h3 className="text-base font-semibold text-text-primary">
                 {tasks.length} evaluation{tasks.length !== 1 ? 's' : ''} detected
               </h3>
-              {isRunning ? (
-                <div className="flex items-center gap-2 mt-1">
-                  <Loader2 className="w-3.5 h-3.5 text-orange-400 animate-spin" />
-                  <span className="text-sm font-medium text-text-primary">Processing…</span>
-                  <span className="text-xs text-text-muted ml-1 pb-[1px]">
-                    ({summary.done + summary.skipped + summary.errors} / {summary.total})
-                  </span>
-                </div>
-              ) : (
-                <p className="text-xs text-text-muted mt-0.5">
-                  Review the list below then click "Evaluate All" to start
-                </p>
-              )}
+              <p className="text-xs text-text-muted mt-0.5">
+                Review the list below then click "Evaluate All" to start
+              </p>
             </div>
-            
+
             <button
               onClick={startBatch}
               disabled={!canRun || isRunning}
@@ -446,17 +437,48 @@ export function BulkUploadForm() {
               Evaluate All {tasks.length}
             </button>
           </div>
-          
-          {isRunning && (
-            <div className="h-1.5 w-full bg-white/[0.06] rounded-full overflow-hidden">
-               <div
-                 className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-500 rounded-full"
-                 style={{ width: `${progress}%` }}
-               />
-             </div>
-          )}
 
           <EvaluationTable tasks={tasks} isRunning={isRunning} onEvaluateSingle={startSingle} />
+        </div>
+      )}
+
+      {/* Full-Screen Loader Modal Overlay for Batch Processing */}
+      {isRunning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center animate-in fade-in duration-300">
+          {/* Backdrop with blur */}
+          <div
+            className="absolute inset-0 bg-bg-base/80 backdrop-blur-md animate-in fade-in duration-300"
+            style={{ backdropFilter: 'blur(12px)' }}
+          />
+
+          {/* Loader Container */}
+          <div className="relative z-10 w-full max-w-3xl mx-4 animate-in zoom-in-95 duration-300">
+            <div className="bg-bg-card/95 border border-white/10 rounded-2xl shadow-2xl p-8 space-y-6">
+              <DocumentAnalysisLoader
+                progress={progress}
+                showTimeEstimate={true}
+                size="lg"
+              />
+
+              {/* Compact status below loader */}
+              <div className="text-center border-t border-white/[0.06] pt-6">
+                <p className="text-sm text-text-muted mb-4">
+                  Processing {summary.done + summary.skipped + summary.errors} of {summary.total} evaluations
+                </p>
+
+                {/* Show table in collapsed state during processing */}
+                <details className="group">
+                  <summary className="cursor-pointer list-none flex items-center justify-center gap-2 p-3 bg-white/[0.02] rounded-lg hover:bg-white/[0.04] transition-colors">
+                    <span className="text-sm text-text-muted">View detailed progress</span>
+                    <ChevronDown className="w-4 h-4 text-text-muted group-open:rotate-180 transition-transform" />
+                  </summary>
+                  <div className="mt-4 max-h-96 overflow-y-auto">
+                    <EvaluationTable tasks={tasks} isRunning={isRunning} onEvaluateSingle={startSingle} />
+                  </div>
+                </details>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

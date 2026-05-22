@@ -11,6 +11,7 @@ import {
   Play,
   CheckCircle
 } from 'lucide-react';
+import { DocumentAnalysisLoader } from '@/components/common/DocumentAnalysisLoader';
 
 const THINKING_STEPS = [
   'Reading interview transcripts...',
@@ -66,6 +67,10 @@ export function NameExtractForm() {
   const [evaluationScore, setEvaluationScore] = useState<number | null>(null);
   const [evaluationCategory, setEvaluationCategory] = useState<string | null>(null);
 
+  // Progress tracking
+  const [evaluationProgress, setEvaluationProgress] = useState(0);
+  const [evaluationStage, setEvaluationStage] = useState<'extracting' | 'analyzing' | 'validating' | 'scoring'>('extracting');
+
   // Thinking steps animation
   const [stepIndex, setStepIndex] = useState(0);
   const [stepVisible, setStepVisible] = useState(true);
@@ -74,8 +79,34 @@ export function NameExtractForm() {
     if (!evaluationLoading) {
       setStepIndex(0);
       setStepVisible(true);
+      setEvaluationProgress(0);
+      setEvaluationStage('extracting');
       return;
     }
+
+    // Simulate progress over ~90 seconds (typical evaluation time)
+    const progressInterval = setInterval(() => {
+      setEvaluationProgress(prev => {
+        if (prev >= 95) return prev; // Stop at 95%, complete on API response
+
+        const newProgress = prev + 1;
+
+        // Update stage based on progress
+        if (newProgress < 25) {
+          setEvaluationStage('extracting');
+        } else if (newProgress < 50) {
+          setEvaluationStage('analyzing');
+        } else if (newProgress < 75) {
+          setEvaluationStage('validating');
+        } else {
+          setEvaluationStage('scoring');
+        }
+
+        return newProgress;
+      });
+    }, 900); // ~90 seconds total (90000ms / 100 steps = 900ms per step)
+
+    // Original step animation for backwards compatibility
     const interval = setInterval(() => {
       setStepVisible(false);
       setTimeout(() => {
@@ -83,7 +114,11 @@ export function NameExtractForm() {
         setStepVisible(true);
       }, 300);
     }, 3000);
-    return () => clearInterval(interval);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(progressInterval);
+    };
   }, [evaluationLoading]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'jd' | 'l1' | 'l2') => {
@@ -216,11 +251,19 @@ export function NameExtractForm() {
     setEvaluationLoading(true);
     setError(null);
     setEvaluationScore(null);
+    setEvaluationProgress(0);
 
     try {
       const result = await panelApi.scorePanel(data);
-      setEvaluationScore(result.panelEfficiencyScore);
-      setEvaluationCategory(result.scoreCategory);
+      // Complete the progress
+      setEvaluationProgress(100);
+      setEvaluationStage('scoring');
+
+      // Small delay to show 100% before showing result
+      setTimeout(() => {
+        setEvaluationScore(result.panelEfficiencyScore);
+        setEvaluationCategory(result.scoreCategory);
+      }, 500);
     } catch (err: any) {
       setError(err.message || 'Failed to evaluate panel.');
       toast.error(err.message || 'Evaluation failed. Please try again.');
@@ -410,51 +453,35 @@ export function NameExtractForm() {
                   disabled={evaluationLoading}
                   className="px-5 py-2 bg-orange-600 text-white hover:bg-orange-700 rounded-lg font-medium text-sm transition-colors flex items-center gap-2 shadow-lg shadow-orange-900/40 disabled:opacity-50"
                 >
-                  {evaluationLoading ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Play className="w-4 h-4" />
-                  )}
-                  {evaluationLoading ? 'Evaluating...' : 'Evaluate'}
+                  <Play className="w-4 h-4" />
+                  Evaluate
                 </button>
               )}
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Thinking steps — visible only during evaluation */}
-          {evaluationLoading && (
-            <div className="border-t border-white/[0.06] pt-4 flex flex-col gap-1.5">
-              {THINKING_STEPS.map((step, i) => {
-                const isDone = i < stepIndex;
-                const isActive = i === stepIndex;
-                return (
-                  <div
-                    key={step}
-                    className={`flex items-center gap-2 text-xs transition-all duration-300 ${
-                      isDone ? 'text-score-good' : isActive ? 'text-text-primary' : 'text-text-muted/40'
-                    }`}
-                  >
-                    <span className="w-3 h-3 flex-shrink-0 flex items-center justify-center">
-                      {isDone ? (
-                        <CheckCircle className="w-3 h-3" />
-                      ) : isActive ? (
-                        <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-                      ) : (
-                        <span className="w-1.5 h-1.5 rounded-full bg-white/10" />
-                      )}
-                    </span>
-                    <span
-                      className={`transition-opacity duration-300 ${
-                        isActive ? (stepVisible ? 'opacity-100' : 'opacity-0') : 'opacity-100'
-                      }`}
-                    >
-                      {step}
-                    </span>
-                  </div>
-                );
-              })}
+      {/* Full-Screen Loader Modal Overlay */}
+      {evaluationLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center animate-in fade-in duration-300">
+          {/* Backdrop with blur */}
+          <div
+            className="absolute inset-0 bg-bg-base/80 backdrop-blur-md animate-in fade-in duration-300"
+            style={{ backdropFilter: 'blur(12px)' }}
+          />
+
+          {/* Loader Container */}
+          <div className="relative z-10 w-full max-w-3xl mx-4 animate-in zoom-in-95 duration-300">
+            <div className="bg-bg-card/95 border border-white/10 rounded-2xl shadow-2xl p-8">
+              <DocumentAnalysisLoader
+                stage={evaluationStage}
+                progress={evaluationProgress}
+                showTimeEstimate={true}
+                size="lg"
+              />
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>
