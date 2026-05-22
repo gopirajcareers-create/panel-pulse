@@ -9,7 +9,7 @@ import {
   FileCode,
   Zap
 } from 'lucide-react';
-
+import { DocumentAnalysisLoader } from '@/components/common/DocumentAnalysisLoader';
 
 import apiClient from '@/lib/api/client';
 
