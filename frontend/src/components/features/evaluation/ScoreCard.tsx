@@ -109,8 +109,8 @@ export function ScoreCard({ score, category, panelName, subtitle, moderation }: 
               <Info className="w-3.5 h-3.5 text-text-muted cursor-help transition-colors group-hover/mod:text-indigo-400" />
               <ModerationBadge compliance={moderation.overall_compliance} />
 
-              {/* Hover tooltip — shows below, aligned to the right */}
-              <div className="absolute right-0 top-full mt-2 w-80 p-4 bg-[#111118] border border-white/10 rounded-xl shadow-2xl opacity-0 invisible group-hover/mod:opacity-100 group-hover/mod:visible transition-all duration-200 z-50 pointer-events-none group-hover/mod:pointer-events-auto">
+              {/* Hover tooltip — shows below, aligned to the right, but shifted left to prevent cutoff */}
+              <div className="absolute left-[-120px] top-full mt-2 w-80 p-4 bg-[#111118] border border-white/10 rounded-xl shadow-2xl opacity-0 invisible group-hover/mod:opacity-100 group-hover/mod:visible transition-all duration-200 z-50 pointer-events-none group-hover/mod:pointer-events-auto">
 
                 <p className="text-[11px] text-text-secondary leading-relaxed mb-3">
                   Interview Moderation checks your interview questions for potentially discriminatory or inappropriate content.
