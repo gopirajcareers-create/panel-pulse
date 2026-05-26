@@ -170,6 +170,7 @@ export default function ResultsPage() {
                 score={displayScore ?? 0}
                 category={displayScoreCategory}
                 panelName={cachedEvaluation?.panelName}
+                moderation={cachedEvaluation?.moderation || useEvaluationStore.getState().moderation}
               />
             </div>
 

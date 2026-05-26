@@ -22,9 +22,9 @@ function genId(): string {
 }
 
 const STARTER_QUESTIONS = [
-  'Which panel member is most suited for Python-based interviews?',
-  'Show me panels with the highest Mandatory Skill Coverage score.',
-  'Who are the top 5 panels ranked by overall score?',
+  'Who is the best panel member for Automation Testing?',
+  'Which panel member got the highest panel score?',
+  'Which panel member is most suited for Java Selenium?',
   'Which panels scored poorly on Technical Depth?',
 ];
 
