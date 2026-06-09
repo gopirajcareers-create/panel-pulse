@@ -8,6 +8,7 @@ const searchRoutes = require('./routes/search');
 const jdRoutes = require('./routes/jd');
 const panelRoutes = require('./routes/panel');
 const extractRoutes = require('./routes/extract');
+const pipelineRoutes = require('./routes/pipeline');
 const chatRoutes = require('./routes/chat');
 const authRoutes = require('./routes/auth');
 const azureAuthRoutes = require('./routes/azureAuth');
@@ -68,6 +69,7 @@ app.use('/api/v1/search', requireAuth, searchRoutes);
 app.use('/api/v1/jd', requireAuth, jdRoutes);
 app.use('/api/v1/panel', requireAuth, panelRoutes);
 app.use('/api/v1/extract', requireAuth, extractRoutes);
+app.use('/api/v1/pipeline', requireAuth, pipelineRoutes);
 app.use('/api/v1/chat', requireAuth, chatRoutes);
 
 

@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BarChart3, Upload, MessageSquare, Check, Users, FileSearch } from 'lucide-react';
+import { BarChart3, Upload, MessageSquare, Check, Users, FileSearch, Layers, LayoutDashboard } from 'lucide-react';
 
 interface NavItem {
   id: string;
@@ -17,6 +17,7 @@ const navItems: NavItem[] = [
     label: 'Dashboard',
     path: '/',
     description: 'View analytics',
+    hidden: true,
   },
   {
     id: 'smart-evaluate',
@@ -24,6 +25,21 @@ const navItems: NavItem[] = [
     label: 'Smart Evaluate',
     path: '/smart-evaluate',
     description: 'Extract & evaluate',
+    hidden: true,
+  },
+  {
+    id: 'smart-extract-i',
+    icon: <Layers className="w-5 h-5" />,
+    label: 'Smart Extract - I',
+    path: '/smart-extract-i',
+    description: '4-Stage pipeline upload',
+  },
+  {
+    id: 'dashboard-i',
+    icon: <LayoutDashboard className="w-5 h-5" />,
+    label: 'Dashboard I',
+    path: '/dashboard-i',
+    description: 'Pipeline candidates',
   },
   {
     id: 'evaluate',

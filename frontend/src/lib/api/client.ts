@@ -84,8 +84,16 @@ apiClient.interceptors.response.use(
     // Let callers handle UI for other errors, but show helpful toasts for common cases
     if (error.response) {
       const statusCode = error.response.status;
+      const requestUrl: string = (error.config as any)?.url || '';
       const message = (error.response.data as any)?.error || 'An error occurred';
-      if (statusCode === 404) toast.error(`Not found: ${message}`);
+
+      // Silently swallow 404s for background "existence check" endpoints —
+      // these are expected to 404 until the record is created (Stage 1).
+      const silenced404Routes = ['/pipeline/candidate', '/auth/me'];
+      const isSilenced404 = statusCode === 404 && silenced404Routes.some(r => requestUrl.includes(r));
+
+      if (isSilenced404) { /* expected 404 — caller handles locally */ }
+      else if (statusCode === 404) toast.error(`Not found: ${message}`);
       else if (statusCode === 401) { /* 401 handled in-page, no global toast */ }
       else if (statusCode === 500) toast.error('Server error. Please try again later.');
       else if (statusCode !== 429) toast.error(message);

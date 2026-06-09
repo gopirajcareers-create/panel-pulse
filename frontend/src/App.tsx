@@ -13,6 +13,9 @@ import PanelInsightsPage from './pages/PanelInsightsPage';
 import PanelProfilePage from './pages/PanelProfilePage';
 import NameExtractPage from './pages/NameExtractPage';
 import LoaderDemoPage from './pages/LoaderDemoPage';
+import SmartExtractIPage from './pages/SmartExtractIPage';
+import DashboardIPage from './pages/DashboardIPage';
+import CandidateResultsPage from './pages/CandidateResultsPage';
 
 function App() {
   return (
@@ -41,6 +44,9 @@ function App() {
           <Route path="/panels/:panelName" element={<ProtectedRoute><PanelProfilePage /></ProtectedRoute>} />
           <Route path="/smart-evaluate" element={<ProtectedRoute><NameExtractPage /></ProtectedRoute>} />
           <Route path="/loader-demo" element={<ProtectedRoute><LoaderDemoPage /></ProtectedRoute>} />
+          <Route path="/smart-extract-i" element={<ProtectedRoute><SmartExtractIPage /></ProtectedRoute>} />
+          <Route path="/dashboard-i" element={<ProtectedRoute><DashboardIPage /></ProtectedRoute>} />
+          <Route path="/dashboard-i/candidate" element={<ProtectedRoute><CandidateResultsPage /></ProtectedRoute>} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>
