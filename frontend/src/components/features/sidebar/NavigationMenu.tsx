@@ -30,14 +30,14 @@ const navItems: NavItem[] = [
   {
     id: 'smart-extract-i',
     icon: <Layers className="w-5 h-5" />,
-    label: 'Smart Extract - I',
+    label: 'Smart Extract',
     path: '/smart-extract-i',
     description: '4-Stage pipeline upload',
   },
   {
     id: 'dashboard-i',
     icon: <LayoutDashboard className="w-5 h-5" />,
-    label: 'Dashboard I',
+    label: 'Dashboard',
     path: '/dashboard-i',
     description: 'Pipeline candidates',
   },

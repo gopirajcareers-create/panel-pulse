@@ -24,7 +24,7 @@ export default function SmartExtractIPage() {
                 <Layers className="w-6 h-6 text-violet-400" />
               </div>
               <div>
-                <h1 className="text-3xl font-bold text-text-primary">Smart Extract — I</h1>
+                <h1 className="text-3xl font-bold text-text-primary">Smart Extract</h1>
                 <p className="text-text-muted text-sm mt-1">
                   4-Stage Interview Pipeline · JD ID + Candidate Name as primary key
                 </p>

@@ -1,0 +1,36 @@
+CLIENT EVALUATION & FEEDBACK REPORT
+Document ID: REF-9981-AUDIT
+Job ID Reference: JD2001
+Candidate Name: Alex Mercer
+Position: Full Stack Software Engineer (Product Engineering)
+Client Reviewer: Tech Lead & Engineering Manager (Nexis Systems)
+Date of Evaluation: June 11, 2026
+Status: REJECTED
+
+Dear Recruitment Team,
+
+Thank you for presenting Alex Mercer for the Full Stack Software Engineer position under Job ID JD2001. We have completed our architectural review and client interview rounds. Unfortunately, we will not be moving forward with Alex at this stage.
+
+Below is the detailed feedback and reasons for rejection:
+
+1. Systems Design & High Concurrency:
+Alex struggled with handling high-concurrency ordering scenarios. When asked to design a database strategy for a high-concurrency flash sale (10,000 requests/sec for 100 items), Alex proposed a basic SELECT check and update loop. When we pointed out that concurrent requests would read the same stock value and oversell, Alex was unable to explain how to utilize database row-level locking (e.g., SELECT ... FOR UPDATE), pessimistic/optimistic concurrency controls, or transactional Redis operations to enforce atomicity.
+
+2. Cloud Architecture & Database Security:
+We probed Alex on cloud deployment and database security, specifically following up on L1 screening gaps. Alex indicated that keeping a production database in a public subnet is secure enough as long as a "strong username and password" is used. This displays a critical misunderstanding of network-level cloud security principles. A senior full-stack engineer is expected to know how to isolate databases in private subnets and restrict access via Security Groups and NAT Gateways.
+
+3. Node.js & Concurrency Mechanics:
+Alex struggled with Node.js event-loop dynamics when handling heavy CPU-bound tasks (like processing large reports or PDF generation). They suggested doing this directly in the main request handler thread, which would block the entire event loop and render the server unresponsive. They were unfamiliar with spawning worker threads, using task queues (like BullMQ), or offloading heavy work to serverless background functions.
+
+4. React & Front-End Internals:
+Although Alex has 3+ years of React experience, they could only provide a surface-level explanation of the virtual DOM and key props. They had no understanding of React's reconciliation engine (Fiber architecture) or how React schedules updates. This is below the bar for senior-level engineers who need to debug complex client performance and rendering bugs.
+
+5. Technical Leadership & Collaboration:
+When presented with a conflict scenario regarding a team member pushing for a complex, over-engineered solution, Alex stated they would simply defer to the senior engineer to "avoid conflict," even when told it would delay the project by weeks. Their secondary strategy was immediate escalation to the manager. We are looking for engineers who can proactively drive alignment through data, micro-benchmarks, or collaborative trade-off analysis.
+
+Overall Recommendation:
+Alex has decent day-to-day coding familiarity with basic React and Express apps, but lacks the system design depth, cloud security maturity, Node.js runtime understanding, and leadership presence required for our senior engineering tier.
+
+Best Regards,
+The Product Engineering Panel
+Nexis Systems Co.

@@ -8,11 +8,13 @@ import { JdSkillsCard } from '@/components/features/evaluation/JdSkillsCard';
 import { PanelSummaryCard } from '@/components/features/evaluation/PanelSummaryCard';
 import { ModerationCard } from '@/components/features/evaluation/ModerationCard';
 import { L1ResultsView } from '@/components/features/stage2/L1ResultsView';
+import { L2ResultsView } from '@/components/features/stage3/L2ResultsView';
+import { ClientAuditView } from '@/components/features/stage4/ClientAuditView';
 import { EmptyState } from '@/components/common/EmptyState';
 import {
-  ArrowLeft, CheckCircle2, Clock, User, FileText, AlertCircle,
-  AlertTriangle, TrendingUp, Check, X, ShieldAlert, Layers, ShieldCheck, RefreshCw, Star, Info,
-  ChevronDown, ChevronUp
+  ArrowLeft, Clock, User, FileText,
+  Check, X, RefreshCw, Info,
+  ChevronDown, ChevronUp, Sparkles, Shield, Zap, Loader2, MessageSquare
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -30,11 +32,25 @@ export default function CandidateResultsPage() {
   const [searchParams] = useSearchParams();
   const jobId = searchParams.get('jobId') || '';
   const candidateName = searchParams.get('candidateName') || '';
+  const urlStage = searchParams.get('stage') as StageId;
 
   const [detail, setDetail] = useState<PipelineDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeStage, setActiveStage] = useState<StageId>('stage1');
+  const [activeStage, setActiveStage] = useState<StageId>(urlStage || 'stage1');
+
+  useEffect(() => {
+    if (urlStage && ['stage1', 'stage2', 'stage3', 'stage4'].includes(urlStage)) {
+      setActiveStage(urlStage);
+    }
+  }, [urlStage]);
+
+  // Stage 1 — AI recommended questions state
+  const [l1Questions, setL1Questions] = useState<Array<{
+    title: string; icon: string; questions: Array<{ q: string; rationale: string }>;
+  }> | null>(null);
+  const [generatingQuestions, setGeneratingQuestions] = useState(false);
+  const [questionsError, setQuestionsError] = useState<string | null>(null);
 
   const loadCandidateDetails = async () => {
     if (!jobId || !candidateName) {
@@ -58,6 +74,21 @@ export default function CandidateResultsPage() {
   useEffect(() => {
     loadCandidateDetails();
   }, [jobId, candidateName]);
+
+  const handleGenerateL1Questions = async () => {
+    setGeneratingQuestions(true);
+    setQuestionsError(null);
+    try {
+      const data = await pipelineApi.generateL1Questions(jobId, candidateName);
+      setL1Questions(data.categories);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err.message || 'Failed to generate questions.';
+      setQuestionsError(msg);
+      toast.error(msg);
+    } finally {
+      setGeneratingQuestions(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -83,7 +114,7 @@ export default function CandidateResultsPage() {
                   onClick={() => navigate('/dashboard-i')}
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider"
                 >
-                  Back to Dashboard I
+                  Back to Dashboard
                 </button>
               }
             />
@@ -213,6 +244,14 @@ export default function CandidateResultsPage() {
             </div>
           </div>
 
+          {/* ── AI Recommended L1 Questions ────────────────────────────────── */}
+          <L1QuestionsPanel
+            questions={l1Questions}
+            generating={generatingQuestions}
+            error={questionsError}
+            onGenerate={handleGenerateL1Questions}
+          />
+
         </div>
       );
     }
@@ -226,71 +265,13 @@ export default function CandidateResultsPage() {
       return <L1ResultsView stageData={stageData} panelName={detail.panelName} />;
     }
 
-    // ── Stage 3: L2 Scoring (existing rendering kept intact) ────────────────
+    // ── Stage 3: L2 Scoring (new l2ScoringService schema) ──────────────────
     if (activeStage === 'stage3') {
       const stageData = detail.stage3;
-
       if (!stageData || !stageData.completed) {
         return <PendingStage label="Stage 3: L2 Scoring" stageId="stage3" />;
       }
-
-      const formatted = formatPipelineEvaluation(stageData.evaluation);
-      if (!formatted) {
-        return (
-          <div className="bg-bg-card rounded-xl border border-white/[0.06] p-6 text-center text-text-muted text-sm">
-            Evaluation output is corrupted or empty.
-          </div>
-        );
-      }
-
-      const refinedJd = {
-        key_skills: detail.stage1?.analysis?.keySkills || [],
-        mandatory_skills: detail.stage1?.analysis?.mandatorySkills || [],
-        good_to_have_skills: detail.stage1?.analysis?.goodToHaveSkills || []
-      };
-
-      return (
-        <div className="space-y-6 animate-in fade-in duration-300">
-          <section className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            <div className="lg:col-span-1">
-              <ScoreCard
-                score={formatted.score}
-                category={formatted.scoreCategory}
-                panelName={detail.panelName}
-                moderation={formatted.moderation}
-              />
-            </div>
-
-            <div className="lg:col-span-3">
-              <DimensionGrid
-                dimensions={formatted.categories}
-                evidence={formatted.evidence}
-                refinedJd={refinedJd}
-              />
-            </div>
-          </section>
-
-          <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <JdSkillsCard refinedJd={refinedJd} />
-            <PanelSummaryCard
-              summary={formatted.panel_summary || formatted.summary}
-              gapAnalysis={formatted.gap_analysis || formatted.recommendations}
-              scoreCategory={formatted.scoreCategory}
-            />
-          </section>
-
-          {formatted.moderation && (
-            <section>
-              <ModerationCard moderation={formatted.moderation} />
-            </section>
-          )}
-
-          <CollapsibleTextBox
-            title="L2 Interview Transcript/Reasons Text"
-            text={stageData.l2Transcript}
-          />
-        </div>
-      );
+      return <L2ResultsView stageData={stageData} panelName={detail.panelName} />;
     }
 
     // Stage 4: Client Audit
@@ -298,51 +279,7 @@ export default function CandidateResultsPage() {
       if (!detail.stage4 || !detail.stage4.completed) {
         return <PendingStage label="Stage 4: Client Audit" stageId="stage4" />;
       }
-      const audit = detail.stage4.analysis;
-      return (
-        <div className="space-y-6 animate-in fade-in duration-300">
-          {/* Verdict Card */}
-          <div className="bg-bg-card rounded-xl border border-white/[0.06] p-6 space-y-4">
-            <div className="flex items-center justify-between flex-wrap gap-4">
-              <div>
-                <h3 className="text-base font-semibold text-text-primary">Leakage Audit Verdict</h3>
-                <p className="text-xs text-text-muted mt-0.5">Automated comparison of L1/L2 transcripts against client rejection feedback</p>
-              </div>
-              <span className={`px-4 py-2 rounded-xl text-xs font-black border uppercase tracking-wider ${
-                audit.leakageVerdict === 'No Leakage' ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' :
-                audit.leakageVerdict === 'L1 Leakage' ? 'bg-orange-500/15 border-orange-500/30 text-orange-300' :
-                audit.leakageVerdict === 'L2 Leakage' ? 'bg-sky-500/15 border-sky-500/30 text-sky-300' :
-                'bg-red-500/15 border-red-500/30 text-red-300'
-              }`}>
-                {audit.leakageVerdict}
-              </span>
-            </div>
-
-            <div className="bg-white/[0.01] border border-white/[0.04] p-4 rounded-lg">
-              <h4 className="text-xs font-bold text-text-muted uppercase tracking-widest mb-2">Audit Summary</h4>
-              <p className="text-sm text-text-primary leading-relaxed whitespace-pre-wrap">{audit.leakageSummary}</p>
-            </div>
-          </div>
-
-          {/* Evidence Card */}
-          {audit.evidence && audit.evidence.length > 0 && (
-            <div className="bg-bg-card rounded-xl border border-white/[0.06] p-6 space-y-4">
-              <h3 className="text-sm font-bold text-text-primary">Leakage Evidence Details</h3>
-              <div className="space-y-3">
-                {audit.evidence.map((point, idx) => (
-                  <div key={idx} className="flex items-start gap-3 bg-white/[0.01] border border-white/[0.04] p-3.5 rounded-lg leading-relaxed">
-                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-2 shrink-0" />
-                    <p className="text-xs text-text-secondary italic leading-relaxed">"{point}"</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Client Feedback Collapsible Box */}
-          <CollapsibleTextBox title="Client Feedback Document Content" text={detail.stage4.feedbackText} />
-        </div>
-      );
+      return <ClientAuditView stageData={detail.stage4} />;
     }
 
     return null;
@@ -360,7 +297,7 @@ export default function CandidateResultsPage() {
               className="flex items-center gap-2 px-3 py-1.5 bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.05] hover:border-white/10 rounded-lg text-text-muted hover:text-text-primary text-xs font-bold transition-all group"
             >
               <ArrowLeft className="w-4 h-4 group-hover:translate-x-[-2px] transition-transform" />
-              Back to Dashboard I
+              Back to Dashboard
             </button>
             <span className="text-text-muted/30">/</span>
             <span className="text-xs text-text-muted font-semibold">Candidate Pipeline Result</span>
@@ -373,7 +310,16 @@ export default function CandidateResultsPage() {
                 <User className="w-7 h-7 text-indigo-400" />
               </div>
               <div className="space-y-1">
-                <h1 className="text-2xl font-black text-orange-500 tracking-tight">{detail.candidateName}</h1>
+                <div className="flex items-center gap-3">
+                  <h1 className="text-2xl font-black text-orange-500 tracking-tight">{detail.candidateName}</h1>
+                  {activeStage === 'stage4' && detail.stage3?.candidateStatus && (
+                    <span className={`px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest border ${
+                      detail.stage3.candidateStatus === 'Selected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'
+                    }`}>
+                      Stage 3: {detail.stage3.candidateStatus}
+                    </span>
+                  )}
+                </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-text-muted font-medium">
                   <span className="px-2 py-0.5 bg-white/[0.04] border border-white/[0.06] text-text-muted rounded font-bold">
                     ID: {detail.jobId}
@@ -424,6 +370,140 @@ export default function CandidateResultsPage() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+// ─── L1 Questions Panel ───────────────────────────────────────────────────────
+
+const CATEGORY_CONFIG: Record<string, { icon: React.ReactNode; color: string; border: string; bg: string; badge: string }> = {
+  shield: {
+    icon: <Shield className="w-4 h-4" />,
+    color: 'text-violet-400', border: 'border-violet-500/30', bg: 'bg-violet-500/10', badge: 'bg-violet-500/15 text-violet-300 border-violet-500/30'
+  },
+  zap: {
+    icon: <Zap className="w-4 h-4" />,
+    color: 'text-orange-400', border: 'border-orange-500/30', bg: 'bg-orange-500/10', badge: 'bg-orange-500/15 text-orange-300 border-orange-500/30'
+  },
+  user: {
+    icon: <MessageSquare className="w-4 h-4" />,
+    color: 'text-sky-400', border: 'border-sky-500/30', bg: 'bg-sky-500/10', badge: 'bg-sky-500/15 text-sky-300 border-sky-500/30'
+  },
+};
+
+function QuestionItem({ q, rationale, idx, colorCls }: { q: string; rationale: string; idx: number; colorCls: typeof CATEGORY_CONFIG[string] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`bg-white/[0.01] border ${colorCls.border} rounded-xl p-4 space-y-2`}>
+      <div className="flex items-start gap-3">
+        <span className={`shrink-0 w-6 h-6 rounded-full ${colorCls.bg} ${colorCls.color} border ${colorCls.border} flex items-center justify-center text-[10px] font-black`}>
+          {idx + 1}
+        </span>
+        <p className="text-sm text-text-primary font-medium leading-relaxed flex-1">{q}</p>
+      </div>
+      {rationale && (
+        <div className="ml-9">
+          <button
+            onClick={() => setOpen(v => !v)}
+            className={`flex items-center gap-1 text-[10px] uppercase tracking-wider font-semibold ${colorCls.color} hover:opacity-80 transition-opacity`}
+          >
+            {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            {open ? 'Hide Rationale' : 'Why this question?'}
+          </button>
+          {open && (
+            <p className="mt-2 text-xs text-text-muted italic leading-relaxed border-l-2 border-white/10 pl-3 animate-in fade-in duration-200">
+              {rationale}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function L1QuestionsPanel({ questions, generating, error, onGenerate }: {
+  questions: Array<{ title: string; icon: string; questions: Array<{ q: string; rationale: string }> }> | null;
+  generating: boolean;
+  error: string | null;
+  onGenerate: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="bg-bg-card rounded-xl border border-amber-500/20 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between p-5 bg-gradient-to-r from-amber-500/5 to-orange-500/5">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-amber-500/15 border border-amber-500/30 rounded-lg">
+            <Sparkles className="w-4 h-4 text-amber-400" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-text-primary">Recommended L1 Interview Questions</h3>
+            <p className="text-[11px] text-text-muted mt-0.5">AI-generated based on candidate resume & JD requirements</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {questions && (
+            <button onClick={() => setOpen(v => !v)} className="p-1.5 rounded-lg hover:bg-white/[0.05] text-text-muted transition-colors">
+              {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
+          )}
+          <button
+            onClick={onGenerate}
+            disabled={generating}
+            className="flex items-center gap-2 px-4 py-2 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 rounded-lg text-xs font-bold transition-all disabled:opacity-60"
+          >
+            {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {generating ? 'Generating...' : questions ? 'Regenerate' : 'Generate Questions'}
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      {generating && (
+        <div className="px-5 pb-5 pt-3 flex items-center gap-3 text-text-muted text-sm">
+          <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+          <span>AI is analysing the JD and resume to craft targeted questions...</span>
+        </div>
+      )}
+
+      {error && !generating && (
+        <div className="px-5 pb-4 pt-2 text-xs text-red-400 flex items-center gap-2">
+          <Info className="w-3.5 h-3.5 shrink-0" /> {error}
+        </div>
+      )}
+
+      {questions && !generating && open && (
+        <div className="p-5 border-t border-white/[0.06] space-y-6 animate-in slide-in-from-top-2 duration-200">
+          {questions.map((cat) => {
+            const cfg = CATEGORY_CONFIG[cat.icon] ?? CATEGORY_CONFIG.user;
+            return (
+              <div key={cat.title} className="space-y-3">
+                <div className={`flex items-center gap-2 ${cfg.color}`}>
+                  <div className={`p-1.5 rounded-lg ${cfg.bg} border ${cfg.border}`}>{cfg.icon}</div>
+                  <h4 className="text-xs font-black uppercase tracking-widest">{cat.title}</h4>
+                  <span className={`ml-auto px-2 py-0.5 rounded text-[10px] font-bold border ${cfg.badge}`}>
+                    {cat.questions.length} questions
+                  </span>
+                </div>
+                <div className="space-y-2.5">
+                  {cat.questions.map((item, idx) => (
+                    <QuestionItem key={idx} q={item.q} rationale={item.rationale} idx={idx} colorCls={cfg} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {questions && !generating && !open && (
+        <div className="px-5 py-3 border-t border-white/[0.06] flex items-center gap-2 text-xs text-text-muted">
+          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+          {questions.reduce((acc, c) => acc + c.questions.length, 0)} questions generated across {questions.length} categories.
+          <button onClick={() => setOpen(true)} className="ml-1 text-amber-400 hover:underline font-semibold">View all</button>
+        </div>
+      )}
+    </div>
   );
 }
 

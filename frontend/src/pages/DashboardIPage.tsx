@@ -73,7 +73,7 @@ export default function DashboardIPage() {
                 <Layers className="w-7 h-7 text-indigo-400 animate-pulse" />
               </div>
               <div>
-                <h1 className="text-2xl font-black text-text-primary tracking-tight">Dashboard I</h1>
+                <h1 className="text-2xl font-black text-text-primary tracking-tight">Dashboard</h1>
                 <p className="text-text-muted text-xs font-semibold uppercase tracking-wider mt-0.5">
                   4-Stage Pipeline Candidates & Smart Extract Results
                 </p>
@@ -139,7 +139,7 @@ export default function DashboardIPage() {
             <div className="bg-white/[0.01] border border-dashed border-white/10 rounded-2xl p-16 text-center">
               <FileText className="w-12 h-12 text-text-muted/30 mx-auto mb-4" />
               <p className="text-base font-bold text-text-primary">No Candidates Found</p>
-              <p className="text-text-muted text-xs mt-1">Upload files through Smart Extract - I to get started.</p>
+              <p className="text-text-muted text-xs mt-1">Upload files through Smart Extract to get started.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4">

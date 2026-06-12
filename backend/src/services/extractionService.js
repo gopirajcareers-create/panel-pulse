@@ -17,19 +17,20 @@ const EXCEL_CELL_LIMIT = 30000; // Target under Excel's 32,767 to leave safety m
 /**
  * Core text extraction from buffer (PDF, DOCX, XLSX, TXT, CSV)
  */
-async function extractTextFromBuffer(buffer, mimetype) {
-  if (mimetype === 'application/pdf') {
+async function extractTextFromBuffer(buffer, mimetype, originalname = '') {
+  const ext = originalname.toLowerCase().split('.').pop();
+  if (mimetype === 'application/pdf' || ext === 'pdf') {
     const data = await pdfParse(buffer);
     return (data.text || '').trim();
   } else if (
     mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    mimetype === 'application/msword'
+    mimetype === 'application/msword' || ext === 'docx' || ext === 'doc'
   ) {
     const result = await mammoth.extractRawText({ buffer });
     return result.value || '';
   } else if (
     mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    mimetype === 'application/vnd.ms-excel'
+    mimetype === 'application/vnd.ms-excel' || ext === 'xlsx' || ext === 'xls'
   ) {
     // Excel support
     const workbook = XLSX.read(buffer, { type: 'buffer' });
@@ -40,7 +41,7 @@ async function extractTextFromBuffer(buffer, mimetype) {
       fullText += `--- Sheet: ${sheetName} ---\n${csv}\n\n`;
     });
     return fullText;
-  } else if (mimetype === 'text/plain' || mimetype === 'text/csv') {
+  } else if (mimetype === 'text/plain' || mimetype === 'text/csv' || ext === 'csv' || ext === 'txt') {
     return buffer.toString('utf-8');
   }
   return '';

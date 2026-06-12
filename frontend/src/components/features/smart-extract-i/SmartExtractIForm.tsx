@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   FileText, Upload, Loader2, X, AlertCircle, FileCode,
   CheckCircle, Shield, Star, Users, ClipboardCheck, LayoutDashboard, Zap,
-  ChevronDown, ChevronUp, Brain, ClipboardList, Target
+  ChevronDown, ChevronUp, Brain, ClipboardList, Target, XCircle
 } from 'lucide-react';
 import { DocumentAnalysisLoader } from '@/components/common/DocumentAnalysisLoader';
 import apiClient from '@/lib/api/client';
@@ -70,6 +70,19 @@ const L1_DIMENSIONS = [
   { name: 'Hands-on Validation',        max: 1.0, focus: 'Probing actual coding, tools, and scripting practices.' },
 ];
 
+// ─── L2 Dimension Reference Table ────────────────────────────────────────────
+
+const L2_DIMENSIONS = [
+  { name: 'Mandatory Skill Coverage',   max: 2.0, focus: 'Verification of high-level mandatory requirements from the JD.' },
+  { name: 'Technical Depth',            max: 2.0, focus: 'System design, design patterns, scalability, and latency probing.' },
+  { name: 'Resume Screening & Handoff', max: 2.0, focus: 'Did the L2 panel check the unverified gaps passed in L1?' },
+  { name: 'Scenario / Risk Evaluation', max: 1.0, focus: 'Real-world architecture failure, scaling, and recovery scenarios.' },
+  { name: 'Framework Knowledge',        max: 1.0, focus: 'Advanced framework patterns (concurrency, lifecycle, hooks).' },
+  { name: 'Hands-on Validation',        max: 1.0, focus: 'Validation of real-world implementation and deployments.' },
+  { name: 'Leadership Evaluation',      max: 0.5, focus: 'Team leadership, mentoring, and strategic ownership.' },
+  { name: 'Behavioral Assessment',      max: 0.5, focus: 'Conflict resolution, communication, and adaptability.' },
+];
+
 // ─── Evaluation progress steps ────────────────────────────────────────────────
 
 const THINKING_STEPS = [
@@ -107,6 +120,14 @@ export function SmartExtractIForm() {
   const [l1Extracting, setL1Extracting] = useState(false);
   const [l1PreviewOpen, setL1PreviewOpen] = useState(false);
   const [showDimTable, setShowDimTable] = useState(false);
+  const [showL2DimTable, setShowL2DimTable] = useState(false);
+  const [candidateStatus, setCandidateStatus] = useState<'Selected' | 'Rejected' | null>(null);
+  const [stage3CandidateStatus, setStage3CandidateStatus] = useState<string | null>(null);
+
+  // L2 transcript preview state
+  const [l2ExtractedText, setL2ExtractedText] = useState('');
+  const [l2Extracting, setL2Extracting] = useState(false);
+  const [l2PreviewOpen, setL2PreviewOpen] = useState(false);
 
   // Auto-filled JD from Stage 1
   const [autoJdText, setAutoJdText] = useState('');
@@ -156,6 +177,7 @@ export function SmartExtractIForm() {
       setVerifyRecord(null);
       setShowVerifyPopup(false);
       setCompletedStages(new Set());
+      setStage3CandidateStatus(null);
       return;
     }
 
@@ -189,6 +211,11 @@ export function SmartExtractIForm() {
             if (activeStage !== 'stage1') {
               setShowVerifyPopup(true);
             }
+          }
+          if (detail.stage3?.candidateStatus) {
+            setStage3CandidateStatus(detail.stage3.candidateStatus);
+          } else {
+            setStage3CandidateStatus(null);
           }
         }
       })
@@ -342,21 +369,42 @@ export function SmartExtractIForm() {
     if (!jdId.trim() || !candidateName.trim()) { setError('JD ID and Candidate Name are required.'); return; }
     if (!l2File) { setError('Please upload the L2 Transcript.'); return; }
     if (!autoJdText) { setError('JD not found for this candidate. Please complete Stage 1 first.'); return; }
+    if (!candidateStatus) { setError('Candidate Status (Selected or Rejected) is mandatory.'); return; }
     setLoading(true); setError(null);
     try {
-      const l2Text = await extractFileText(l2File, 'l2');
+      let l2Text = l2ExtractedText;
+      if (!l2Text) {
+        const fd = new FormData();
+        fd.append('file', l2File);
+        fd.append('jobId', jdId || 'preview');
+        const res = await apiClient.post('/api/v1/extract/jd', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+        if (res.data.success) {
+          l2Text = String(res.data.data?.JD ?? '');
+          setL2ExtractedText(l2Text);
+        }
+      }
+      if (!l2Text) {
+        setError('No text could be extracted from the L2 transcript file. Please upload a readable PDF or DOCX.');
+        setLoading(false);
+        return;
+      }
       await pipelineApi.submitStage3({
         jobId: jdId.trim(),
         candidateName: candidateName.trim(),
         panelName,
         panelEmail,
         panelId,
-        l2Transcript: l2Text
+        l2Transcript: l2Text,
+        candidateStatus: candidateStatus
       });
       setEvaluationProgress(100);
       setCompletedStages(prev => new Set([...prev, 'stage3']));
       setSuccess(true);
-      toast.success('L2 Scoring complete.');
+      toast.success('✅ L2 Scoring complete — results saved.');
+      // Auto-navigate to Stage 3 results
+      setTimeout(() => {
+        navigate(`/dashboard-i/candidate?jobId=${encodeURIComponent(jdId.trim())}&candidateName=${encodeURIComponent(candidateName.trim())}&stage=stage3`);
+      }, 1500);
     } catch (err: any) {
       setError(err.message || 'L2 evaluation failed');
       toast.error(err.message || 'L2 evaluation failed');
@@ -381,7 +429,8 @@ export function SmartExtractIForm() {
       await pipelineApi.submitStage4({
         jobId: jdId.trim(),
         candidateName: candidateName.trim(),
-        feedbackText
+        feedbackText,
+        feedbackFileName: feedbackFile.name
       });
 
       setCompletedStages(prev => new Set([...prev, 'stage4']));
@@ -547,6 +596,8 @@ export function SmartExtractIForm() {
           </div>
         )}
 
+
+
         {/* Upload Area */}
         {activeStage === 'stage1' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -629,12 +680,117 @@ export function SmartExtractIForm() {
           </div>
         )}
         {activeStage === 'stage3' && (
-          <FileSlot label="L2 Transcript" accept=".pdf,.docx,.doc" hint="PDF, DOCX" accent="sky" file={l2File}
-            onChange={e => { if (e.target.files?.[0]) setL2File(e.target.files[0]); }} onRemove={() => setL2File(null)} />
+          <div className="space-y-4 animate-in fade-in duration-300">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-widest text-text-muted mb-2">
+                Candidate Status <span className="text-red-400">*</span>
+              </label>
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  type="button"
+                  onClick={() => setCandidateStatus('Selected')}
+                  className={`py-3 px-4 rounded-lg text-sm font-semibold border transition-all ${
+                    candidateStatus === 'Selected'
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 shadow-sm shadow-emerald-500/10'
+                      : 'bg-white/[0.02] border-white/10 text-text-muted hover:bg-white/[0.04] hover:text-text-primary'
+                  }`}
+                >
+                  Selected
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCandidateStatus('Rejected')}
+                  className={`py-3 px-4 rounded-lg text-sm font-semibold border transition-all ${
+                    candidateStatus === 'Rejected'
+                      ? 'bg-red-500/20 text-red-400 border-red-500/40 shadow-sm shadow-red-500/10'
+                      : 'bg-white/[0.02] border-white/10 text-text-muted hover:bg-white/[0.04] hover:text-text-primary'
+                  }`}
+                >
+                  Rejected
+                </button>
+              </div>
+            </div>
+
+            {/* L2 file slot with auto-extraction */}
+            {!l2File ? (
+              <label className="flex flex-col items-center justify-center border-2 border-dashed border-sky-500/30 rounded-xl p-10 cursor-pointer hover:bg-sky-500/5 transition-all group">
+                <Upload className="w-7 h-7 mb-2 text-sky-400 opacity-40 group-hover:opacity-70 transition-opacity" />
+                <span className="text-sm font-semibold text-sky-400 opacity-60 group-hover:opacity-90">Upload L2 Transcript</span>
+                <span className="text-[11px] text-text-muted/50 mt-1">PDF, DOCX — interview transcript file</span>
+                <input type="file" className="hidden" accept=".pdf,.docx,.doc,.txt"
+                  onChange={async e => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setL2File(file);
+                    setL2ExtractedText('');
+                    setL2PreviewOpen(false);
+                    setError(null);
+                    setL2Extracting(true);
+                    try {
+                      const fd = new FormData();
+                      fd.append('file', file);
+                      fd.append('jobId', jdId || 'preview');
+                      const res = await apiClient.post('/api/v1/extract/jd', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+                      if (res.data.success) setL2ExtractedText(String(res.data.data?.JD ?? ''));
+                    } catch { /* non-fatal */ }
+                    finally { setL2Extracting(false); }
+                  }}
+                />
+              </label>
+            ) : (
+              <div className="flex items-center gap-3 px-4 py-3 bg-sky-500/5 border border-sky-500/30 rounded-xl">
+                <FileText className="w-5 h-5 text-sky-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-text-primary font-medium truncate">{l2File.name}</p>
+                  <p className="text-[11px] text-text-muted">{(l2File.size / 1024).toFixed(1)} KB</p>
+                </div>
+                {l2Extracting
+                  ? <Loader2 className="w-4 h-4 animate-spin text-sky-400 shrink-0" />
+                  : l2ExtractedText
+                    ? <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 whitespace-nowrap">{l2ExtractedText.length} chars ✓</span>
+                    : <span className="text-[10px] text-sky-400/60 italic">extracting…</span>}
+                <button onClick={() => { setL2File(null); setL2ExtractedText(''); setL2PreviewOpen(false); }}
+                  className="text-text-muted hover:text-red-400 transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Transcript preview toggle */}
+            {l2ExtractedText && (
+              <div className="bg-white/[0.015] border border-white/[0.06] rounded-xl overflow-hidden animate-in slide-in-from-top-2 duration-200">
+                <button onClick={() => setL2PreviewOpen(v => !v)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 text-xs text-text-muted hover:text-text-primary hover:bg-white/[0.02] transition-colors">
+                  <span className="flex items-center gap-1.5 font-semibold">
+                    <FileCode className="w-3.5 h-3.5 text-sky-400" />
+                    Transcript Preview
+                  </span>
+                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${
+                    l2PreviewOpen ? 'text-sky-400 bg-sky-500/10 border-sky-500/20' : 'text-text-muted bg-white/[0.03] border-white/[0.06]'
+                  }`}>{l2PreviewOpen ? 'Hide' : 'Show'}</span>
+                </button>
+                {l2PreviewOpen && (
+                  <div className="border-t border-white/[0.06] p-4 bg-slate-950/40">
+                    <pre className="text-xs text-text-secondary font-mono whitespace-pre-wrap max-h-64 overflow-y-auto leading-relaxed p-3 bg-white/[0.01] rounded-lg border border-white/[0.04]">
+                      {l2ExtractedText.slice(0, 3000)}{l2ExtractedText.length > 3000 ? '\n\n[... preview truncated — full text will be scored ...]' : ''}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
         {activeStage === 'stage4' && (
           <div className="space-y-4">
-            <FileSlot label="Client Feedback" accept=".pdf,.docx,.doc,.xlsx,.xls" hint="PDF, DOCX, XLS" accent="emerald" file={feedbackFile}
+            {stage3CandidateStatus && (
+              <div className={`p-3 rounded-xl border flex items-center gap-2 text-xs font-bold ${
+                stage3CandidateStatus === 'Selected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'
+              }`}>
+                {stage3CandidateStatus === 'Selected' ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                Stage 3 L2 Panel Decision: Candidate {stage3CandidateStatus}
+              </div>
+            )}
+            <FileSlot label="Client Feedback" accept=".pdf,.docx,.doc,.xlsx,.xls,.csv" hint="PDF, DOCX, XLS, CSV" accent="emerald" file={feedbackFile}
               onChange={e => { if (e.target.files?.[0]) setFeedbackFile(e.target.files[0]); }} onRemove={() => setFeedbackFile(null)} />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
               {[
@@ -665,20 +821,20 @@ export function SmartExtractIForm() {
             <div className="flex items-center gap-2 text-sm text-emerald-400">
               <CheckCircle className="w-4 h-4 shrink-0" />
               {activeStage === 'stage1' ? 'Stage 1 complete — JD & Resume stored for all stages.'
-               : activeStage === 'stage2' ? 'L1 Scoring complete — results saved to Dashboard I.'
-               : activeStage === 'stage3' ? 'L2 Scoring complete — results saved to Dashboard I.'
+               : activeStage === 'stage2' ? 'L1 Scoring complete — results saved to Dashboard.'
+               : activeStage === 'stage3' ? 'L2 Scoring complete — results saved to Dashboard.'
                : 'Client Audit uploaded.'}
             </div>
             <button onClick={() => navigate('/dashboard-i')}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/20 border border-primary/30 text-primary rounded-lg text-xs font-semibold hover:bg-primary/30 transition-colors">
-              <LayoutDashboard className="w-3.5 h-3.5" />View in Dashboard I
+              <LayoutDashboard className="w-3.5 h-3.5" />View in Dashboard
             </button>
           </div>
         )}
 
         {/* Submit Button */}
         <div className="flex justify-end">
-          <button onClick={handleSubmit} disabled={loading}
+          <button onClick={handleSubmit} disabled={loading || (activeStage === 'stage3' && !candidateStatus)}
             className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all disabled:opacity-50 ${cfg.bgColor} ${cfg.color} border ${cfg.borderColor} hover:opacity-90`}>
             {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Processing…</>
             : success ? <><CheckCircle className="w-4 h-4" />Submitted</>

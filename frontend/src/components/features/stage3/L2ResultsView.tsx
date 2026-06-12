@@ -1,11 +1,12 @@
 /**
- * L1ResultsView — Stage 2 L1 Scoring Results Display
+ * L2ResultsView — Stage 3 L2 Scoring Results Display
  *
- * Renders the full L1 evaluation from the new l1ScoringService schema:
+ * Renders the full L2 evaluation from the new l2ScoringService schema:
  *  - Overall score ring + category badge
- *  - 6-dimension breakdown grid (with ⓘ tooltips)
+ *  - 8-dimension breakdown grid (with ⓘ tooltips)
  *  - Per-dimension evidence & summary
  *  - Panel summary + recommendations (with ⓘ tooltips)
+ *  - Candidate Status badge (Selected/Rejected)
  *  - Interview Moderation card
  *  - Raw transcript collapsible
  */
@@ -19,52 +20,66 @@ import {
 
 // ─── Dimension Config ─────────────────────────────────────────────────────────
 
-const L1_DIMENSIONS = [
+const L2_DIMENSIONS = [
   {
     name: 'Mandatory Skill Coverage',
     max: 2.0,
-    color: 'violet',
-    tooltip: 'Did the panel member ask about every mandatory technical skill listed in the Job Description? A high score means all critical skills (e.g., React, PostgreSQL) were explicitly probed — not just assumed.',
+    color: 'sky',
+    tooltip: 'Verification of high-level mandatory requirements from the Job Description. A high score means the panel explicitly checked all critical technical requisites in detail.',
   },
   {
     name: 'Technical Depth',
     max: 2.0,
-    color: 'indigo',
-    tooltip: 'Did the panel go beyond surface-level answers? This dimension scores whether the interviewer used follow-up questions to probe deeper — asking "how", "why", or "what would happen if…" after the candidate\'s initial response.',
+    color: 'teal',
+    tooltip: 'System design, design patterns, scalability, latency, performance tuning, and architecture-level probing. Checks if the panel pushed for deep engineering decisions.',
   },
   {
-    name: 'Resume Initial Screening',
+    name: 'Resume Screening & Handoff',
     max: 2.0,
-    color: 'orange',
-    tooltip: 'Did the panel verify the key claims made in the candidate\'s resume? This checks if the interviewer cross-referenced specific projects, years of experience, or technical skills mentioned in the resume during the interview.',
+    color: 'cyan',
+    tooltip: 'Did the L2 panel verify the candidate\'s specific resume claims and project history? Also checks if they followed up on unverified gaps or handoff items from the L1 interview.',
   },
   {
     name: 'Scenario / Risk Evaluation',
-    max: 2.0,
-    color: 'sky',
-    tooltip: 'Did the panel test the candidate with real-world scenarios, edge cases, or production-level risk situations? This rewards practical problem-solving questions that reveal how the candidate handles challenges beyond textbook answers.',
+    max: 1.0,
+    color: 'indigo',
+    tooltip: 'Real-world architecture failure, scaling limits, disaster recovery, concurrency bottlenecks, or system downtime recovery scenarios.',
   },
   {
     name: 'Framework Knowledge',
     max: 1.0,
-    color: 'emerald',
-    tooltip: 'Did the panel probe specific libraries, tools, design patterns, or frameworks relevant to the role? For example: asking about React hooks vs class components, Express middleware patterns, or Docker multi-stage builds.',
+    color: 'violet',
+    tooltip: 'Probing advanced framework patterns and internal workings (concurrency patterns, lifecycle, hook internals, dependency injection, caching).',
   },
   {
     name: 'Hands-on Validation',
     max: 1.0,
-    color: 'amber',
-    tooltip: 'Did the panel ask the candidate to demonstrate practical skills — such as walking through code, explaining a system design, describing a real implementation, or solving a technical problem live? This validates that the candidate can apply knowledge, not just recall it.',
+    color: 'emerald',
+    tooltip: 'Verification of real-world implementation experience, code review practices, CI/CD pipelines, automated testing strategies, and deployments.',
+  },
+  {
+    name: 'Leadership Evaluation',
+    max: 0.5,
+    color: 'orange',
+    tooltip: 'Probing team leadership, mentoring other developers, design ownership, technical roadmap contributions, and stakeholder collaboration.',
+  },
+  {
+    name: 'Behavioral Assessment',
+    max: 0.5,
+    color: 'pink',
+    tooltip: 'Evaluating conflict resolution, professional communication, adaptability under pressure, handling ambiguity, and team culture fit.',
   },
 ];
 
 const COLOR_MAP: Record<string, { bg: string; border: string; text: string; bar: string }> = {
-  violet:  { bg: 'bg-violet-500/10',  border: 'border-violet-500/30',  text: 'text-violet-400',  bar: 'bg-violet-500' },
-  indigo:  { bg: 'bg-indigo-500/10',  border: 'border-indigo-500/30',  text: 'text-indigo-400',  bar: 'bg-indigo-500' },
-  orange:  { bg: 'bg-orange-500/10',  border: 'border-orange-500/30',  text: 'text-orange-400',  bar: 'bg-orange-500' },
   sky:     { bg: 'bg-sky-500/10',     border: 'border-sky-500/30',     text: 'text-sky-400',     bar: 'bg-sky-500' },
+  teal:    { bg: 'bg-teal-500/10',    border: 'border-teal-500/30',    text: 'text-teal-400',    bar: 'bg-teal-500' },
+  cyan:    { bg: 'bg-cyan-500/10',    border: 'border-cyan-500/30',    text: 'text-cyan-400',    bar: 'bg-cyan-500' },
+  indigo:  { bg: 'bg-indigo-500/10',  border: 'border-indigo-500/30',  text: 'text-indigo-400',  bar: 'bg-indigo-500' },
+  violet:  { bg: 'bg-violet-500/10',  border: 'border-violet-500/30',  text: 'text-violet-400',  bar: 'bg-violet-500' },
   emerald: { bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400', bar: 'bg-emerald-500' },
-  amber:   { bg: 'bg-amber-500/10',   border: 'border-amber-500/30',   text: 'text-amber-400',   bar: 'bg-amber-500' },
+  orange:  { bg: 'bg-orange-500/10',  border: 'border-orange-500/30',  text: 'text-orange-400',  bar: 'bg-orange-500' },
+  pink:    { bg: 'bg-pink-500/10',    border: 'border-pink-500/30',    text: 'text-pink-400',    bar: 'bg-pink-500' },
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -79,7 +94,7 @@ function ScoreRing({ score, max = 10 }: { score: number; max?: number }) {
   const pct = Math.max(0, Math.min(100, (score / max) * 100));
   const r = 36, circ = 2 * Math.PI * r;
   const strokeDash = (pct / 100) * circ;
-  const color = score >= 8 ? '#34d399' : score >= 5 ? '#f97316' : '#f87171';
+  const color = score >= 8 ? '#38bdf8' : score >= 5 ? '#f97316' : '#f87171'; // L2 Sky theme color for good
   return (
     <svg width="88" height="88" viewBox="0 0 88 88">
       <circle cx="44" cy="44" r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="9" />
@@ -106,7 +121,7 @@ function InfoTooltip({ text, children, position = 'right' }: { text?: string; ch
     <div className="relative group inline-flex items-center">
       <button
         type="button"
-        className="text-text-muted hover:text-indigo-400 transition-colors cursor-help p-0.5"
+        className="text-text-muted hover:text-sky-400 transition-colors cursor-help p-0.5"
         aria-label="More information"
       >
         <Info className="w-3.5 h-3.5" />
@@ -137,14 +152,14 @@ interface Props {
   panelName?: string;
 }
 
-export function L1ResultsView({ stageData, panelName }: Props) {
+export function L2ResultsView({ stageData, panelName }: Props) {
   const [transcriptOpen, setTranscriptOpen] = useState(false);
 
   const ev = stageData?.evaluation;
   if (!ev) {
     return (
       <div className="bg-bg-card rounded-xl border border-white/[0.06] p-6 text-center text-text-muted text-sm">
-        L1 evaluation output is missing or corrupted.
+        L2 evaluation output is missing or corrupted.
       </div>
     );
   }
@@ -153,6 +168,19 @@ export function L1ResultsView({ stageData, panelName }: Props) {
   const category: string  = ev.score_category ?? (score >= 8 ? 'Good' : score >= 5 ? 'Moderate' : 'Poor');
   const moderation        = ev.moderation ?? stageData.moderation ?? null;
 
+  // Candidate status (Selected/Rejected)
+  const rawStatus = stageData?.candidateStatus || ev.candidate_status || 'Selected';
+  const isSelected = rawStatus === 'Selected' || rawStatus === 'Select';
+  const statusBadge = isSelected ? (
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 uppercase tracking-wide">
+      Selected
+    </span>
+  ) : (
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/10 border border-red-500/20 text-red-400 uppercase tracking-wide">
+      Rejected
+    </span>
+  );
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
 
@@ -160,60 +188,67 @@ export function L1ResultsView({ stageData, panelName }: Props) {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
 
         {/* Score Card */}
-        <div className="lg:col-span-1 bg-bg-card rounded-xl border border-white/[0.06] p-5 space-y-4 flex flex-col">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 group relative">
-              <h3 className="text-sm font-bold text-text-primary">Panel Efficiency</h3>
-              <Info className="w-3.5 h-3.5 text-text-muted cursor-help" />
-              <div className="absolute left-0 top-full mt-2 w-60 p-3 bg-[#111118] border border-white/10 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 text-[11px] space-y-1.5">
-                <p className="font-bold text-text-primary text-xs mb-1">L1 Score Categories</p>
-                <p><span className="text-emerald-400 font-semibold">Good (8.0–10.0):</span> Thorough probing across all dimensions.</p>
-                <p><span className="text-orange-400 font-semibold">Moderate (5.0–7.9):</span> Acceptable, with some gaps.</p>
-                <p><span className="text-red-400 font-semibold">Poor (0.0–4.9):</span> Insufficient or superficial probing.</p>
+        <div className="lg:col-span-1 bg-bg-card rounded-xl border border-white/[0.06] p-5 space-y-4 flex flex-col justify-between">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 group relative">
+                <h3 className="text-sm font-bold text-text-primary">Panel Efficiency</h3>
+                <Info className="w-3.5 h-3.5 text-text-muted cursor-help" />
+                <div className="absolute left-0 top-full mt-2 w-60 p-3 bg-[#111118] border border-white/10 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 text-[11px] space-y-1.5">
+                  <p className="font-bold text-text-primary text-xs mb-1">L2 Score Categories</p>
+                  <p><span className="text-sky-400 font-semibold">Good (8.0–10.0):</span> Thorough probing across L2 dimensions.</p>
+                  <p><span className="text-orange-400 font-semibold">Moderate (5.0–7.9):</span> Acceptable, with some gaps.</p>
+                  <p><span className="text-red-400 font-semibold">Poor (0.0–4.9):</span> Insufficient or superficial L2 probing.</p>
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-1.5">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${categoryStyles(category)}`}>
+                  {category}
+                </span>
+                {statusBadge}
               </div>
             </div>
-            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold border ${categoryStyles(category)}`}>
-              {category}
-            </span>
-          </div>
 
-          <div className="flex items-center gap-4">
-            <ScoreRing score={score} />
-            <div className="space-y-2">
-              <div>
-                <p className="text-[10px] uppercase tracking-widest text-text-muted mb-0.5">L1 Score</p>
-                <p className="text-2xl font-bold text-text-primary leading-none">
-                  {score.toFixed(1)}<span className="text-sm font-normal text-text-muted"> / 10.0</span>
-                </p>
+            <div className="flex items-center gap-4">
+              <ScoreRing score={score} />
+              <div className="space-y-2">
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-text-muted mb-0.5">L2 Score</p>
+                  <p className="text-2xl font-bold text-text-primary leading-none">
+                    {score.toFixed(1)}<span className="text-xs font-normal text-text-muted"> / 10.0</span>
+                  </p>
+                </div>
+                {ev.score_percent != null && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-widest text-text-muted mb-0.5">Match</p>
+                    <p className="text-sm font-bold text-sky-400">{ev.score_percent}%</p>
+                  </div>
+                )}
+                {panelName && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-widest text-text-muted mb-0.5">Panel</p>
+                    <p className="text-xs text-text-primary font-semibold truncate max-w-[110px]">{panelName}</p>
+                  </div>
+                )}
               </div>
-              {ev.score_percent != null && (
-                <div>
-                  <p className="text-[10px] uppercase tracking-widest text-text-muted mb-0.5">Match</p>
-                  <p className="text-base font-bold text-orange-400">{ev.score_percent}%</p>
-                </div>
-              )}
-              {panelName && (
-                <div>
-                  <p className="text-[10px] uppercase tracking-widest text-text-muted mb-0.5">Panel</p>
-                  <p className="text-xs text-text-primary font-semibold truncate max-w-[110px]">{panelName}</p>
-                </div>
-              )}
             </div>
           </div>
 
           {/* Moderation quick badge */}
           {moderation && (
-            <ModerationBadge compliance={moderation.overall_compliance ?? 'pass'} />
+            <div className="mt-4">
+              <ModerationBadge compliance={moderation.overall_compliance ?? 'pass'} />
+            </div>
           )}
         </div>
 
         {/* Dimension Grid */}
         <div className="lg:col-span-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {L1_DIMENSIONS.map(dim => {
+            {L2_DIMENSIONS.map(dim => {
               const sc = typeof ev.categories?.[dim.name] === 'number' ? ev.categories[dim.name] : 0;
               const pct = Math.round((sc / dim.max) * 100);
-              const clr = COLOR_MAP[dim.color] ?? COLOR_MAP.orange;
+              const clr = COLOR_MAP[dim.color] ?? COLOR_MAP.sky;
               const evLines: string[] = Array.isArray(ev.evidence?.[dim.name]) ? ev.evidence[dim.name] : [];
               const summary: string = ev.dimension_summaries?.[dim.name] ?? '';
               return (
@@ -239,11 +274,11 @@ export function L1ResultsView({ stageData, panelName }: Props) {
         {/* Panel Summary */}
         <div className="bg-bg-card rounded-xl border border-white/[0.06] p-5 space-y-3">
           <div className="flex items-center gap-2">
-            <Brain className="w-4 h-4 text-orange-400" />
+            <Brain className="w-4 h-4 text-sky-400" />
             <h3 className="text-sm font-bold text-text-primary">Panel Performance Summary</h3>
             <InfoTooltip
               position="top"
-              text="The AI reads the full L1 transcript and generates a qualitative summary of how well the panel member conducted the interview — covering skill coverage, depth of probing, question variety, and overall balance. It does not evaluate the candidate; it evaluates the interviewer."
+              text="The AI reads the full L2 transcript and generates a qualitative summary of how well the L2 panel member conducted the interview — covering technical depth, design probing, leadership verification, and alignment. It evaluates the interviewer."
             />
           </div>
           <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line">
@@ -254,24 +289,24 @@ export function L1ResultsView({ stageData, panelName }: Props) {
         {/* Recommendations */}
         <div className="bg-bg-card rounded-xl border border-white/[0.06] p-5 space-y-3">
           <div className="flex items-center gap-2">
-            <Target className="w-4 h-4 text-indigo-400" />
+            <Target className="w-4 h-4 text-teal-400" />
             <h3 className="text-sm font-bold text-text-primary">Improvement Recommendations</h3>
             <InfoTooltip
               position="top"
-              text="Based on dimension scores and identified gaps, the AI generates specific, actionable recommendations for the panel member to improve their L1 interview technique. For example: if Technical Depth scored low, the AI will suggest types of follow-up questions to add in future interviews."
+              text="Based on L2 scores and identified gaps, the AI generates specific, actionable recommendations for the panel member to improve their L2 interview technique — focusing on system design, scenarios, or leadership evaluation methods."
             />
           </div>
           {Array.isArray(ev.recommendations) && ev.recommendations.length > 0 ? (
             <ul className="space-y-2.5">
               {ev.recommendations.map((rec: string, i: number) => (
                 <li key={i} className="flex items-start gap-2.5 text-sm text-text-secondary">
-                  <span className="mt-0.5 w-5 h-5 shrink-0 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 flex items-center justify-center text-[10px] font-bold">{i + 1}</span>
+                  <span className="mt-0.5 w-5 h-5 shrink-0 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-400 flex items-center justify-center text-[10px] font-bold">{i + 1}</span>
                   <span>{rec}</span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-text-muted">No specific recommendations available.</p>
+            <p className="text-sm text-text-muted">No L2 recommendations available.</p>
           )}
         </div>
       </div>
@@ -289,7 +324,7 @@ export function L1ResultsView({ stageData, panelName }: Props) {
                 <div className="space-y-2">
                   <p className="font-semibold text-text-primary text-xs">Interview Moderation</p>
                   <p className="text-text-secondary text-[11px] leading-normal">
-                    Analyzes the L1 interview transcript to check for compliance and identify potentially biased, discriminatory, or inappropriate questions.
+                    Analyzes the L2 interview transcript to check for compliance and identify potentially biased, discriminatory, or inappropriate questions.
                   </p>
                   <div className="pt-2 border-t border-white/10 space-y-1.5">
                     <p className="font-semibold text-text-primary text-[10px] uppercase tracking-wider">Status Levels:</p>
@@ -315,20 +350,20 @@ export function L1ResultsView({ stageData, panelName }: Props) {
       )}
 
       {/* ── Row 4: Transcript collapsible ──────────────────────────────────── */}
-      {stageData.l1Transcript && (
+      {stageData.l2Transcript && (
         <div className="bg-bg-card border border-white/[0.06] rounded-xl overflow-hidden">
           <button onClick={() => setTranscriptOpen(v => !v)}
             className="w-full flex items-center justify-between px-5 py-4 text-sm font-semibold text-text-primary hover:bg-white/[0.02] transition-colors">
             <span className="flex items-center gap-2">
-              <FileCode className="w-4 h-4 text-orange-400" />
-              Raw L1 Interview Transcript
+              <FileCode className="w-4 h-4 text-sky-400" />
+              Raw L2 Interview Transcript
             </span>
             {transcriptOpen ? <ChevronUp className="w-4 h-4 text-text-muted" /> : <ChevronDown className="w-4 h-4 text-text-muted" />}
           </button>
           {transcriptOpen && (
             <div className="border-t border-white/[0.06] p-5">
               <pre className="text-xs text-text-secondary font-mono whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto">
-                {stageData.l1Transcript}
+                {stageData.l2Transcript}
               </pre>
             </div>
           )}
@@ -354,7 +389,7 @@ function DimensionCard({ name, score, max, pct, colorCls, evidence, summary, too
           <p className="text-xs font-bold text-text-primary leading-snug truncate">{name}</p>
           {/* Info tooltip */}
           <div className="relative group flex-shrink-0">
-            <button className="text-text-muted hover:text-indigo-400 transition-colors cursor-help" aria-label={`About ${name}`}>
+            <button className="text-text-muted hover:text-sky-400 transition-colors cursor-help" aria-label={`About ${name}`}>
               <Info className="w-3.5 h-3.5" />
             </button>
             <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-60 bg-[#0d0d14] border border-white/10 rounded-xl p-3.5 shadow-2xl
@@ -441,7 +476,7 @@ function FullModerationCard({ moderation }: { moderation: any }) {
               <div className="space-y-2">
                 <p className="font-semibold text-text-primary text-xs">Interview Moderation</p>
                 <p className="text-text-secondary text-[11px] leading-normal">
-                  Analyzes the L1 interview transcript to check for compliance and identify potentially biased, discriminatory, or inappropriate questions.
+                  Analyzes the L2 interview transcript to check for compliance and identify potentially biased, discriminatory, or inappropriate questions.
                 </p>
                 <div className="pt-2 border-t border-white/10 space-y-1.5">
                   <p className="font-semibold text-text-primary text-[10px] uppercase tracking-wider">Status Levels:</p>

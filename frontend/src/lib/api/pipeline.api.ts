@@ -54,16 +54,62 @@ export interface PipelineDetail {
     completed: boolean;
     completedAt: string;
     l2Transcript: string;
+    candidateStatus?: 'Selected' | 'Rejected' | string;
     evaluation: any;
+    moderation?: any;
   };
   stage4?: {
     completed: boolean;
     completedAt: string;
     feedbackText: string;
+    feedbackFileName?: string;
+    identityConfirmation?: {
+      jobIdFoundInFilename: boolean;
+      jobIdFoundInContent: boolean;
+      candidateFoundInFilename: boolean;
+      candidateFoundInContent: boolean;
+      fileName: string;
+      confirmationStatus: 'Confirmed' | 'Partially Confirmed' | 'Unconfirmed';
+      confirmationNote: string;
+    };
     analysis: {
-      leakageVerdict: 'L1 Leakage' | 'L2 Leakage' | 'Joint Failure' | 'No Leakage';
-      leakageSummary: string;
-      evidence: string[];
+      leakageVerdict: 'L1 Leakage' | 'L2 Leakage' | 'Joint Failure' | 'No Leakage' | 'Unjustified Rejection';
+      overallAuditSummary: string;
+      screeningAudit: {
+        verdict: 'Accurate' | 'Missed Gaps' | 'Over-screened';
+        summary: string;
+        gaps: string[];
+      };
+      l1Audit: {
+        probingLevel: 'Excellent' | 'Good' | 'Adequate' | 'Weak' | 'Poor';
+        probingLevelScore: number;
+        summary: string;
+        strengths: string[];
+        gaps: string[];
+        panelSummaryAccuracy: 'Accurate' | 'Partially Accurate' | 'Inaccurate';
+        panelSummaryNote: string;
+      };
+      l2Audit: {
+        probingLevel: 'Excellent' | 'Good' | 'Adequate' | 'Weak' | 'Poor';
+        probingLevelScore: number;
+        summary: string;
+        strengths: string[];
+        gaps: string[];
+        panelSummaryAccuracy: 'Accurate' | 'Partially Accurate' | 'Inaccurate';
+        panelSummaryNote: string;
+      };
+      rejectionReasonValidity: 'Valid' | 'Partially Valid' | 'Invalid';
+      rejectionReasonAnalysis: string;
+      crossArtifactEvidence: string[];
+      recommendations: {
+        screening: string;
+        l1Panel: string;
+        l2Panel: string;
+        process: string;
+      };
+      // Legacy fallback fields
+      leakageSummary?: string;
+      evidence?: string[];
     };
   };
 }
@@ -72,6 +118,7 @@ const CATEGORY_KEY_MAP: Record<string, string> = {
   'Mandatory Skill Coverage': 'mandatorySkillCoverage',
   'Technical Depth': 'technicalDepth',
   'Rejection Validation Alignment': 'rejectionValidationAlignment',
+  'Resume Screening & Handoff': 'resumeScreeningHandoff',
   'Scenario / Risk Evaluation': 'scenarioRiskEvaluation',
   'Framework Knowledge': 'frameworkKnowledge',
   'Hands-on Validation': 'handsOnValidation',
@@ -185,6 +232,7 @@ export const pipelineApi = {
     panelEmail: string;
     panelId: string;
     l2Transcript: string;
+    candidateStatus: 'Selected' | 'Rejected';
   }): Promise<any> {
     // Stage 3 starts an async job
     const startResp = await apiClient.post('/api/v1/pipeline/stage3', data, { timeout: 15000 });
@@ -215,8 +263,20 @@ export const pipelineApi = {
     jobId: string;
     candidateName: string;
     feedbackText: string;
+    feedbackFileName?: string;
   }): Promise<any> {
     const response = await apiClient.post('/api/v1/pipeline/stage4', data);
     return response.data;
+  },
+
+  async generateL1Questions(jobId: string, candidateName: string): Promise<{
+    categories: Array<{
+      title: string;
+      icon: string;
+      questions: Array<{ q: string; rationale: string }>;
+    }>;
+  }> {
+    const response = await apiClient.post('/api/v1/pipeline/generate-l1-questions', { jobId, candidateName });
+    return response.data.data;
   }
 };

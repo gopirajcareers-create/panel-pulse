@@ -3,6 +3,7 @@ const router = express.Router();
 const { getDb } = require('../services/mongoClient');
 const { performPanelEvaluation } = require('../services/panelEvaluationService');
 const { runL1Evaluation } = require('../services/l1ScoringService');   // NEW Stage-2 service
+const { runL2Evaluation } = require('../services/l2ScoringService');   // NEW Stage-3 service
 const { analyzeJD } = require('../services/jdAnalyzerService');
 const { callLLM } = require('../services/llmClient');
 const { randomUUID } = require('crypto');
@@ -335,7 +336,7 @@ router.post('/stage2', async (req, res) => {
  */
 router.post('/stage3', async (req, res) => {
   try {
-    const { jobId, candidateName, panelName, panelEmail, panelId, l2Transcript } = req.body;
+    const { jobId, candidateName, panelName, panelEmail, panelId, l2Transcript, candidateStatus = 'Selected' } = req.body;
 
     if (!jobId || !candidateName || !l2Transcript) {
       return res.status(400).json({
@@ -349,27 +350,27 @@ router.post('/stage3', async (req, res) => {
     const existing = await pipelineCol.findOne({ jobId, candidateName });
 
     const jdText = existing?.stage1?.jdText || 'General Software Engineering Job Description';
-    // Use Stage 2 transcript or default empty
+    const resumeText = existing?.stage1?.resumeText || '';
     const l1Transcript = existing?.stage2?.l1Transcript || '';
 
     const asyncJobId = randomUUID();
     jobStore.set(asyncJobId, { status: 'processing', createdAt: Date.now() });
 
-    performPanelEvaluation({
-      job_id: jobId,
-      panel_name: panelName || existing?.panelName || 'L2 Panel',
-      candidate_name: candidateName,
+    runL2Evaluation({
+      jobId,
+      candidateName,
+      panelName: panelName || existing?.panelName || 'L2 Panel',
+      panelEmail: panelEmail || existing?.panelEmail || '',
+      panelId: panelId || existing?.panelId || '',
       jd: jdText,
-      // For Stage 3, the L2 Rejection/Transcript plays the role of the validation alignment check.
-      // To run L2 scoring correctly, we treat it as an L2 validation evaluation.
-      l1_transcripts: [l1Transcript || l2Transcript],
-      l2_rejection_reasons: [l2Transcript],
-      panel_member_id: panelId || existing?.panelId || '',
-      panel_member_email: panelEmail || existing?.panelEmail || ''
+      resumeText,
+      l1Transcript,
+      l2Transcript,
+      candidateStatus
     })
       .then(async (result) => {
         if (!result.success) {
-          jobStore.set(asyncJobId, { status: 'failed', error: result.error, createdAt: Date.now() });
+          jobStore.set(asyncJobId, { status: 'failed', error: result.error || 'L2 evaluation failed', createdAt: Date.now() });
           return;
         }
 
@@ -378,11 +379,16 @@ router.post('/stage3', async (req, res) => {
           { jobId, candidateName },
           {
             $set: {
+              panelName: panelName || existing?.panelName || 'L2 Panel',
+              panelEmail: panelEmail || existing?.panelEmail || '',
+              panelId: panelId || existing?.panelId || '',
               stage3: {
                 completed: true,
                 completedAt: new Date().toISOString(),
                 l2Transcript,
-                evaluation: result.evaluation
+                candidateStatus,
+                evaluation: result.evaluation,
+                moderation: result.moderation
               },
               updatedAt: new Date()
             },
@@ -401,6 +407,7 @@ router.post('/stage3', async (req, res) => {
         });
       })
       .catch(err => {
+        console.error('[Stage3] Evaluation error:', err.message);
         jobStore.set(asyncJobId, { status: 'failed', error: err.message, createdAt: Date.now() });
       });
 
@@ -413,11 +420,16 @@ router.post('/stage3', async (req, res) => {
 
 /**
  * POST /api/v1/pipeline/stage4
- * Save Stage 4 and audit leakage
+ * Comprehensive Client Audit — holistic cross-artifact quality audit:
+ *   - Resume & JD alignment
+ *   - L1 probing level & panel summary
+ *   - L2 probing level & panel summary
+ *   - Rejection reason validation
+ *   - Leakage verdict + actionable recommendations
  */
 router.post('/stage4', async (req, res) => {
   try {
-    const { jobId, candidateName, feedbackText } = req.body;
+    const { jobId, candidateName, feedbackText, feedbackFileName = '' } = req.body;
 
     if (!jobId || !candidateName || !feedbackText) {
       return res.status(400).json({
@@ -437,61 +449,290 @@ router.post('/stage4', async (req, res) => {
       });
     }
 
-    const stage2Eval = existing?.stage2?.evaluation || {};
-    const stage3Eval = existing?.stage3?.evaluation || {};
+    // ── Identity Confirmation — check JD ID & Candidate name in filename + content ─
+    const normalizedJobId   = jobId.trim().toLowerCase();
+    const normalizedCandidate = candidateName.trim().toLowerCase().replace(/\s+/g, ' ');
+    const normalizedFileName  = feedbackFileName.trim().toLowerCase();
+    const normalizedContent   = feedbackText.toLowerCase();
 
-    const systemPrompt = `You are a Senior Technical Recruiter and Quality Auditor. Match client feedback against the L1 (Stage 2) and L2 (Stage 3) interview scores to audit for leakage. Return ONLY a valid JSON object matching the exact schema. Ensure all strings are JSON-safe.`;
+    const candidateFirstName  = normalizedCandidate.split(' ')[0];
+    const candidateLastName   = normalizedCandidate.split(' ').slice(-1)[0];
+
+    const jobIdInFilename   = normalizedFileName.includes(normalizedJobId);
+    const jobIdInContent    = normalizedContent.includes(normalizedJobId);
+    const candidateInFilename = (
+      normalizedFileName.includes(normalizedCandidate) ||
+      normalizedFileName.includes(candidateFirstName) ||
+      normalizedFileName.includes(candidateLastName)
+    );
+    const candidateInContent = (
+      normalizedContent.includes(normalizedCandidate) ||
+      normalizedContent.includes(candidateFirstName) ||
+      normalizedContent.includes(candidateLastName)
+    );
+
+    const identityConfirmation = {
+      jobIdFoundInFilename:   jobIdInFilename,
+      jobIdFoundInContent:    jobIdInContent,
+      candidateFoundInFilename: candidateInFilename,
+      candidateFoundInContent:  candidateInContent,
+      fileName: feedbackFileName || 'Unknown',
+      confirmationStatus: 'Unconfirmed',
+      confirmationNote: ''
+    };
+
+    const isSpreadsheet = normalizedFileName.endsWith('.xlsx') || normalizedFileName.endsWith('.xls') || normalizedFileName.endsWith('.csv');
+    const matchedInFilename = jobIdInFilename && candidateInFilename;
+    const matchedInContent = jobIdInContent && candidateInContent;
+
+    if (matchedInFilename && matchedInContent) {
+      identityConfirmation.confirmationStatus = 'Confirmed';
+      identityConfirmation.confirmationNote = `Rejection document confirmed: Job ID "${jobId}" and Candidate "${candidateName}" found in both the filename and the ${isSpreadsheet ? 'spreadsheet' : 'document'} text content.`;
+    } else if (matchedInFilename) {
+      identityConfirmation.confirmationStatus = 'Confirmed';
+      identityConfirmation.confirmationNote = `Rejection document confirmed: Job ID "${jobId}" and Candidate "${candidateName}" both matched in the filename (${feedbackFileName}).`;
+    } else if (matchedInContent) {
+      identityConfirmation.confirmationStatus = 'Confirmed';
+      identityConfirmation.confirmationNote = `Rejection document confirmed: Job ID "${jobId}" and Candidate "${candidateName}" both matched inside the ${isSpreadsheet ? 'spreadsheet' : 'document'} text content.`;
+    } else {
+      // Partial or cross-location match
+      const anyJobId = jobIdInFilename || jobIdInContent;
+      const anyCandidate = candidateInFilename || candidateInContent;
+      if (anyJobId && anyCandidate) {
+        identityConfirmation.confirmationStatus = 'Confirmed';
+        const locJob = jobIdInFilename ? 'filename' : 'content';
+        const locCand = candidateInFilename ? 'filename' : 'content';
+        identityConfirmation.confirmationNote = `Rejection document confirmed: Job ID found in ${locJob} and Candidate name found in ${locCand}.`;
+      } else if (anyCandidate) {
+        identityConfirmation.confirmationStatus = 'Partially Confirmed';
+        identityConfirmation.confirmationNote = `Candidate name "${candidateName}" was identified in the ${candidateInFilename ? 'filename' : 'document content'}, but the Job ID "${jobId}" was not found.`;
+      } else if (anyJobId) {
+        identityConfirmation.confirmationStatus = 'Partially Confirmed';
+        identityConfirmation.confirmationNote = `Job ID "${jobId}" was identified in the ${jobIdInFilename ? 'filename' : 'document content'}, but the Candidate "${candidateName}" was not found.`;
+      } else {
+        identityConfirmation.confirmationStatus = 'Unconfirmed';
+        identityConfirmation.confirmationNote = `Neither Job ID "${jobId}" nor Candidate "${candidateName}" could be found in the filename or document content. Please verify if the uploaded file is correct.`;
+      }
+    }
+
+    console.log(`[Stage4] Identity check: status=${identityConfirmation.confirmationStatus} jobIdInContent=${jobIdInContent} candidateInContent=${candidateInContent}`);
+
+    // ── Gather all pipeline artifacts ───────────────────────────────────────
+    const jdText       = existing?.stage1?.jdText       || '';
+    const resumeText   = existing?.stage1?.resumeText   || '';
+    const s1Analysis   = existing?.stage1?.analysis     || {};
+
+    const l1Transcript = existing?.stage2?.l1Transcript || '';
+    const l1Eval       = existing?.stage2?.evaluation   || {};
+    const l1Categories = l1Eval.categories || {};
+    const l1Score      = l1Eval.score ?? 'N/A';
+    const l1Summary    = l1Eval.panel_summary || 'Not available.';
+    const l1DimSummaries = l1Eval.dimension_summaries || {};
+    const l1Moderation = existing?.stage2?.moderation  || {};
+    const l1Recommendations = l1Eval.recommendations || [];
+
+    const l2Transcript = existing?.stage3?.l2Transcript || '';
+    const l2Eval       = existing?.stage3?.evaluation   || {};
+    const l2Categories = l2Eval.categories || {};
+    const l2Score      = l2Eval.score ?? 'N/A';
+    const l2Summary    = l2Eval.panel_summary || 'Not available.';
+    const l2DimSummaries = l2Eval.dimension_summaries || {};
+    const l2Moderation = existing?.stage3?.moderation  || {};
+    const l2Recommendations = l2Eval.recommendations || [];
+    const candidateStatus = existing?.stage3?.candidateStatus || 'Not Set';
+
+    // ── Build powerful comprehensive LLM prompt ─────────────────────────────
+    const systemPrompt = `You are a world-class Senior Quality Auditor and HR Compliance Specialist with 20+ years of experience auditing technical recruitment pipelines.
+
+YOUR MISSION: Conduct a COMPREHENSIVE, ACCURATE, and CONSISTENT holistic audit of the entire recruitment pipeline for one candidate. You have access to ALL artifacts: the Job Description, Candidate Resume, Stage 1 Screening output, L1 Interview transcript and scores, L2 Interview transcript and scores, and the Client Rejection Feedback.
+
+AUDIT PHILOSOPHY:
+- You are not just finding "leakage" — you are quality-auditing every stage of the hiring funnel.
+- Every finding must be EVIDENCE-BASED and traceable to a specific artifact.
+- Be consistent: if L1 probed a skill deeply, say so clearly. Do not be vague.
+- Be fair: if the client's rejection reason is vague or unfounded, call it out as "Invalid" or "Unjustified Rejection".
+- Focus on WHAT THE PANEL DID OR DIDN'T DO, not just what the candidate said.
+
+PROBING LEVEL DEFINITIONS (apply strictly):
+- Excellent (9-10): Panel asked 3+ deep follow-up questions per critical area; covered all JD mandatory skills at depth.
+- Good (7-8): Panel asked meaningful questions on most areas; minor gaps only.
+- Adequate (5-6): Basic probing; surfaced skills but lacked follow-up depth.
+- Weak (3-4): Only surface-level or shallow questions; multiple mandatory areas missed.
+- Poor (0-2): Critical areas entirely absent; minimal technical probing.
+
+REJECTION REASON VALIDITY:
+- Valid: Client's stated reason directly matches documented weak performance in L1 or L2 transcripts.
+- Partially Valid: Client's reason partially aligns with interview evidence, but some aspects are subjective or unclear.
+- Invalid: Client's reason is unsupported, contradicted by interview evidence, or the candidate performed adequately in the cited area.
+
+LEAKAGE VERDICTS:
+- "L1 Leakage": L1 panel missed probing critical areas that client flagged; L2 was not at fault.
+- "L2 Leakage": L2 panel missed probing critical areas; L1 was adequate.
+- "Joint Failure": Both L1 and L2 failed to probe critical areas.
+- "No Leakage": Both panels probed adequately; client rejection is due to subjective fit or requirements not in JD.
+- "Unjustified Rejection": The client's stated reason is not supported by actual evidence from any artifact.
+
+CRITICAL OUTPUT RULES:
+- Return ONLY a valid JSON object. Absolutely no markdown, no explanation outside JSON.
+- All string values must be JSON-safe (no raw newlines, no control characters).
+- Every summary, note, and gap must be a COMPLETE professional sentence — not a fragment.
+- crossArtifactEvidence: List at least 5 specific, cited points referencing exact artifacts.
+- All arrays must have at least 1 item.`;
+
     const userPrompt = `/no_think
-Audit the L1 and L2 evaluations against client feedback to determine if there was interview leakage.
 
-L1 (Stage 2) Evaluation summary:
-Score: ${stage2Eval.score || 'N/A'}/10
-Categories: ${JSON.stringify(stage2Eval.categories || {})}
-Summary: ${stage2Eval.panel_summary || 'No L1 evaluation details available.'}
+=== CANDIDATE IDENTITY CONFIRMED ===
+Job ID: ${jobId}
+Candidate Name: ${candidateName}
+Rejection Document Identity Confirmation: ${identityConfirmation.confirmationStatus}
+Note: ${identityConfirmation.confirmationNote}
+File Name: ${feedbackFileName || 'Not provided'}
 
-L2 (Stage 3) Evaluation summary:
-Score: ${stage3Eval.score || 'N/A'}/10
-Categories: ${JSON.stringify(stage3Eval.categories || {})}
-Summary: ${stage3Eval.panel_summary || 'No L2 evaluation details available.'}
+=== STAGE 1 — RESUME SCREENING RESULTS ===
+JD (first 2500 chars):
+${jdText.substring(0, 2500)}
 
-Client Feedback / Audit text:
-${feedbackText.substring(0, 8000)}
+Candidate Resume (first 2500 chars):
+${resumeText.substring(0, 2500)}
 
-Determine:
-1. Leakage Verdict:
-   - "L1 Leakage" (if L1 missed checking or failed to probe critical technical areas mentioned in client feedback)
-   - "L2 Leakage" (if L2 missed checking or failed to probe critical technical areas mentioned in client feedback)
-   - "Joint Failure" (if both L1 & L2 failed to probe/evaluate these areas properly)
-   - "No Leakage" (if both probed properly and the client's rejection was due to subjective differences or new requirements)
-2. Detailed audit explanation.
-3. Specific evidence quotes or bullet points comparing feedback to transcripts/evaluations.
+Screening Match Score: ${s1Analysis.matchScore ?? 'N/A'}%
+Screening Status: ${s1Analysis.status ?? 'N/A'}
+Mandatory Skills Matched: ${(s1Analysis.mandatorySkillsMatch || []).filter(s => s.matched).map(s => s.skill).join(', ') || 'None identified'}
+Mandatory Skills Missed: ${(s1Analysis.mandatorySkillsMatch || []).filter(s => !s.matched).map(s => s.skill).join(', ') || 'None'}
+Good-to-Have Skills Matched: ${(s1Analysis.additionalSkillsMatch || []).filter(s => s.matched).map(s => s.skill).join(', ') || 'None'}
+Good-to-Have Skills Missed: ${(s1Analysis.additionalSkillsMatch || []).filter(s => !s.matched).map(s => s.skill).join(', ') || 'None'}
+Screening Summary: ${s1Analysis.screeningSummary || 'Not available.'}
+Experience Match: ${s1Analysis.experienceMatch || 'Not available.'}
 
-Return JSON matching this schema:
+=== STAGE 2 — L1 INTERVIEW EVALUATION ===
+L1 Panel Score: ${l1Score}/10
+L1 Panel Summary: ${l1Summary}
+L1 Moderation Status: ${l1Moderation?.verdict || 'N/A'}
+L1 Moderation Note: ${l1Moderation?.summary || 'N/A'}
+L1 Category Scores (JSON): ${JSON.stringify(l1Categories, null, 2)}
+L1 Dimension Summaries:
+${Object.entries(l1DimSummaries).map(([k, v]) => `  - ${k}: ${v}`).join('\n') || 'Not available.'}
+L1 Panel Recommendations:
+${Array.isArray(l1Recommendations) ? l1Recommendations.map((r, i) => `  ${i+1}. ${r}`).join('\n') : 'Not available.'}
+
+L1 Transcript (first 4000 chars):
+${l1Transcript ? l1Transcript.substring(0, 4000) : 'Not available.'}
+
+=== STAGE 3 — L2 INTERVIEW EVALUATION ===
+L2 Panel Score: ${l2Score}/10
+L2 Panel Summary: ${l2Summary}
+L2 Moderation Status: ${l2Moderation?.verdict || 'N/A'}
+L2 Moderation Note: ${l2Moderation?.summary || 'N/A'}
+L2 Category Scores (JSON): ${JSON.stringify(l2Categories, null, 2)}
+L2 Dimension Summaries:
+${Object.entries(l2DimSummaries).map(([k, v]) => `  - ${k}: ${v}`).join('\n') || 'Not available.'}
+L2 Panel Recommendations:
+${Array.isArray(l2Recommendations) ? l2Recommendations.map((r, i) => `  ${i+1}. ${r}`).join('\n') : 'Not available.'}
+Candidate Decision by L2 Panel: ${candidateStatus}
+
+L2 Transcript (first 4500 chars):
+${l2Transcript ? l2Transcript.substring(0, 4500) : 'Not available.'}
+
+=== STAGE 4 — CLIENT REJECTION FEEDBACK ===
+Filename: ${feedbackFileName || 'Not provided'}
+${feedbackText.substring(0, 5000)}
+
+=== YOUR AUDIT TASKS — Answer ALL of these ===
+
+TASK 1 — SCREENING QUALITY: Was Stage 1 screening accurate for this JD and candidate? Did the screening correctly identify mandatory skill gaps or did it miss misalignments that led to client rejection?
+
+TASK 2 — L1 PANEL PROBING QUALITY: Using the L1 transcript, assess how deeply the L1 panel probed each mandatory JD skill. Which areas were covered well and which were missed? Quote specific questions or lack thereof.
+
+TASK 3 — L2 PANEL PROBING QUALITY: Using the L2 transcript, assess how deeply the L2 panel probed mandatory JD skills, system design, leadership, and advanced scenarios. Which areas were covered well and which were missed?
+
+TASK 4 — PANEL SUMMARY ACCURACY: Were the L1 and L2 panel summaries accurate representations of what actually happened in the transcripts?
+
+TASK 5 — REJECTION REASON VALIDATION: Based on ALL evidence (resume, JD, L1 and L2 transcripts, panel scores), is the client's stated rejection reason Valid, Partially Valid, or Invalid? Did the candidate actually demonstrate weakness in the areas cited?
+
+TASK 6 — LEAKAGE VERDICT: Based on ALL evidence, what is the leakage verdict?
+
+TASK 7 — CROSS-ARTIFACT EVIDENCE: List at least 5-7 specific evidence points, each referencing a specific artifact.
+
+TASK 8 — RECOMMENDATIONS: Give precise, actionable recommendations for each stage.
+
+Return ONLY this exact JSON structure (no markdown, no text outside JSON):
 {
-  "leakageVerdict": "L1 Leakage" | "L2 Leakage" | "Joint Failure" | "No Leakage",
-  "leakageSummary": "Provide a detailed summary auditing the panel members' performance against client feedback.",
-  "evidence": [
-    "Evidence quote/point 1",
-    "Evidence quote/point 2"
-  ]
-}
-`;
+  "leakageVerdict": "<L1 Leakage|L2 Leakage|Joint Failure|No Leakage|Unjustified Rejection>",
+  "overallAuditSummary": "<4-5 sentence comprehensive professional audit summary covering all pipeline stages, candidate performance, and client feedback validity>",
+
+  "screeningAudit": {
+    "verdict": "<Accurate|Missed Gaps|Over-screened>",
+    "summary": "<2-3 sentence analysis of screening quality>",
+    "gaps": ["<specific gap 1>", "<specific gap 2>"]
+  },
+
+  "l1Audit": {
+    "probingLevel": "<Excellent|Good|Adequate|Weak|Poor>",
+    "probingLevelScore": <0-10 integer>,
+    "summary": "<3-4 sentence professional analysis of L1 panel probing quality, referencing specific parts of the transcript>",
+    "strengths": ["<specific strength 1>", "<specific strength 2>"],
+    "gaps": ["<specific gap 1>", "<specific gap 2>"],
+    "panelSummaryAccuracy": "<Accurate|Partially Accurate|Inaccurate>",
+    "panelSummaryNote": "<one complete sentence on whether the L1 panel summary accurately reflects what happened in the L1 transcript>"
+  },
+
+  "l2Audit": {
+    "probingLevel": "<Excellent|Good|Adequate|Weak|Poor>",
+    "probingLevelScore": <0-10 integer>,
+    "summary": "<3-4 sentence professional analysis of L2 panel probing quality, referencing specific parts of the transcript>",
+    "strengths": ["<specific strength 1>", "<specific strength 2>"],
+    "gaps": ["<specific gap 1>", "<specific gap 2>"],
+    "panelSummaryAccuracy": "<Accurate|Partially Accurate|Inaccurate>",
+    "panelSummaryNote": "<one complete sentence on whether the L2 panel summary accurately reflects what happened in the L2 transcript>"
+  },
+
+  "rejectionReasonValidity": "<Valid|Partially Valid|Invalid>",
+  "rejectionReasonAnalysis": "<3-4 sentence professional verdict on whether the client's rejection reason is well-grounded, referencing specific evidence from transcripts and JD>",
+
+  "crossArtifactEvidence": [
+    "<Evidence point 1 — [Artifact: JD/Resume/L1 Transcript/L2 Transcript/Client Feedback] specific observation>",
+    "<Evidence point 2 — [Artifact: ...] specific observation>",
+    "<Evidence point 3 — [Artifact: ...] specific observation>",
+    "<Evidence point 4 — [Artifact: ...] specific observation>",
+    "<Evidence point 5 — [Artifact: ...] specific observation>",
+    "<Evidence point 6 — [Artifact: ...] specific observation>"
+  ],
+
+  "recommendations": {
+    "screening": "<Specific actionable recommendation for Stage 1 screening improvement>",
+    "l1Panel": "<Specific actionable recommendation for L1 panel probing improvement>",
+    "l2Panel": "<Specific actionable recommendation for L2 panel probing improvement>",
+    "process": "<Overall pipeline process improvement recommendation>"
+  }
+}`;
 
     let auditAnalysis = {
       leakageVerdict: 'No Leakage',
-      leakageSummary: 'Client feedback reviewed and matching L1/L2 details.',
-      evidence: ['Feedback aligned with stage evaluation findings.']
+      overallAuditSummary: 'Client feedback reviewed. Audit could not be fully completed due to a processing error.',
+      screeningAudit: { verdict: 'Accurate', summary: 'Screening data not available.', gaps: [] },
+      l1Audit: { probingLevel: 'Adequate', probingLevelScore: 5, summary: 'L1 data not available.', strengths: [], gaps: [], panelSummaryAccuracy: 'Accurate', panelSummaryNote: 'N/A' },
+      l2Audit: { probingLevel: 'Adequate', probingLevelScore: 5, summary: 'L2 data not available.', strengths: [], gaps: [], panelSummaryAccuracy: 'Accurate', panelSummaryNote: 'N/A' },
+      rejectionReasonValidity: 'Partially Valid',
+      rejectionReasonAnalysis: 'Rejection reason analysis could not be completed.',
+      crossArtifactEvidence: ['Full audit data not available — please retry.'],
+      recommendations: { screening: 'N/A', l1Panel: 'N/A', l2Panel: 'N/A', process: 'N/A' }
     };
 
     try {
+      console.log(`[Stage4] Running comprehensive audit for jobId=${jobId} candidate="${candidateName}" identityStatus=${identityConfirmation.confirmationStatus}`);
       const llmResponse = await callLLM([
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
-      ], { temperature: 0.1, maxTokens: 1000 });
+      ], { temperature: 0.1, maxTokens: 3000, think: false });
       const parsed = parseJSONSafely(llmResponse);
-      if (parsed) auditAnalysis = parsed;
+      if (parsed && parsed.leakageVerdict) {
+        auditAnalysis = parsed;
+        console.log(`[Stage4] Audit complete — verdict=${parsed.leakageVerdict} rejectionValid=${parsed.rejectionReasonValidity}`);
+      } else {
+        console.warn('[Stage4] LLM returned invalid structure, using fallback');
+      }
     } catch (err) {
-      console.error('LLM Stage 4 audit failed:', err.message);
+      console.error('[Stage4] LLM audit failed:', err.message);
     }
 
     await pipelineCol.updateOne(
@@ -502,6 +743,8 @@ Return JSON matching this schema:
             completed: true,
             completedAt: new Date().toISOString(),
             feedbackText,
+            feedbackFileName,
+            identityConfirmation,
             analysis: auditAnalysis
           },
           updatedAt: new Date()
@@ -512,12 +755,141 @@ Return JSON matching this schema:
 
     return res.status(200).json({
       success: true,
-      data: {
-        auditAnalysis
-      }
+      data: { auditAnalysis, identityConfirmation }
     });
   } catch (error) {
-    console.error('Error in stage4 pipeline endpoint:', error);
+    console.error('[Stage4] Endpoint error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
+
+/**
+ * POST /api/v1/pipeline/generate-l1-questions
+ * Generate AI-recommended L1 interview questions based on JD + Resume
+ */
+router.post('/generate-l1-questions', async (req, res) => {
+  try {
+    const { jobId, candidateName } = req.body;
+
+    if (!jobId || !candidateName) {
+      return res.status(400).json({ success: false, error: 'jobId and candidateName are required' });
+    }
+
+    const db = await getDb();
+    const pipelineCol = db.collection('pipeline_evaluations');
+    const existing = await pipelineCol.findOne({ jobId, candidateName });
+
+    if (!existing?.stage1?.completed) {
+      return res.status(400).json({ success: false, error: 'Stage 1 must be completed before generating L1 questions.' });
+    }
+
+    const jdText     = existing.stage1.jdText     || '';
+    const resumeText = existing.stage1.resumeText  || '';
+    const mandatorySkills = existing.stage1.analysis?.mandatorySkills || [];
+    const goodToHaveSkills = existing.stage1.analysis?.goodToHaveSkills || [];
+
+    const systemPrompt = `You are a world-class Senior Technical Recruiter and L1 Interview Coach with 15+ years of experience conducting structured technical interviews.
+
+Your role is to generate highly targeted, professional interview questions for an L1 (first-round technical screening) interview. The questions must:
+1. Be grounded STRICTLY in the candidate's actual resume skills and the JD's requirements
+2. Progress from basic verification to depth-probing
+3. Test both breadth (did the candidate do this?) and depth (how deeply do they understand it?)
+4. Include scenario-based questions to reveal practical problem-solving ability
+5. Be professional, open-ended, and non-leading
+
+Return ONLY a valid JSON object. No markdown, no explanation outside JSON.`;
+
+    const userPrompt = `/no_think
+
+=== JOB DESCRIPTION (Key Requirements) ===
+${jdText.substring(0, 3000)}
+
+=== MANDATORY SKILLS ===
+${mandatorySkills.join(', ')}
+
+=== GOOD-TO-HAVE SKILLS ===
+${goodToHaveSkills.join(', ')}
+
+=== CANDIDATE RESUME ===
+${resumeText.substring(0, 4000)}
+
+=== YOUR TASK ===
+Generate exactly 3 categories of questions, totaling 12-15 questions. Each question must be specific to THIS candidate's resume and THIS JD.
+
+Category 1: "Mandatory Skill Verification" (5-6 questions)
+- One focused question per mandatory skill listed in the JD
+- Should verify the candidate's resume claims about each skill
+- Example frame: "Your resume mentions [specific claim from resume] — can you walk me through..."
+
+Category 2: "Technical Depth & Scenarios" (4-5 questions)
+- Scenario-based and problem-solving questions
+- Should expose how deeply the candidate can think through real-world challenges
+- Must relate to the actual role requirements and the candidate's claimed experience
+- Example frame: "If you encountered [real-world scenario relevant to their claimed work]..."
+
+Category 3: "Resume Verification & Behavioral" (3-4 questions)
+- Questions that probe specific projects, achievements, and claims from the resume
+- Should encourage the candidate to narrate concrete experiences
+- Example frame: "You mentioned [specific project/role from resume] — tell me about..."
+
+For each question, provide a "rationale" explaining why this question is important for evaluating this specific candidate against this JD.
+
+Return this exact JSON schema:
+{
+  "categories": [
+    {
+      "title": "Mandatory Skill Verification",
+      "icon": "shield",
+      "questions": [
+        {
+          "q": "<Full interview question text>",
+          "rationale": "<Why this question matters for this specific candidate/role>"
+        }
+      ]
+    },
+    {
+      "title": "Technical Depth & Scenarios",
+      "icon": "zap",
+      "questions": [
+        {
+          "q": "<Full interview question text>",
+          "rationale": "<Why this question matters for this specific candidate/role>"
+        }
+      ]
+    },
+    {
+      "title": "Resume Verification & Behavioral",
+      "icon": "user",
+      "questions": [
+        {
+          "q": "<Full interview question text>",
+          "rationale": "<Why this question matters for this specific candidate/role>"
+        }
+      ]
+    }
+  ]
+}`;
+
+    console.log(`[GenerateL1Qs] jobId=${jobId} candidate="${candidateName}"`);
+
+    const llmResponse = await callLLM([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ], { temperature: 0.3, maxTokens: 2500, think: false });
+
+    const parsed = parseJSONSafely(llmResponse);
+
+    if (!parsed?.categories || !Array.isArray(parsed.categories)) {
+      return res.status(500).json({ success: false, error: 'LLM returned invalid question structure.' });
+    }
+
+    console.log(`[GenerateL1Qs] Generated ${parsed.categories.reduce((acc, c) => acc + c.questions.length, 0)} questions`);
+
+    return res.status(200).json({ success: true, data: parsed });
+  } catch (error) {
+    console.error('[GenerateL1Qs] Error:', error.message);
     return res.status(500).json({ success: false, error: error.message });
   }
 });
