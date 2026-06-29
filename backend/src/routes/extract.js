@@ -18,7 +18,7 @@ router.post('/jd', upload.single('file'), async (req, res) => {
     const { jobId } = req.body;
     if (!jobId) return res.status(400).json({ success: false, error: 'Job ID is required' });
 
-    const text = await extractionService.extractTextFromBuffer(req.file.buffer, req.file.mimetype);
+    const text = await extractionService.extractTextFromBuffer(req.file.buffer, req.file.mimetype, req.file.originalname);
     const data = await extractionService.extractJD(text, jobId);
 
     res.json({ success: true, data });
@@ -37,7 +37,7 @@ router.post('/l1', upload.single('file'), async (req, res) => {
     const { jobId } = req.body;
     if (!jobId) return res.status(400).json({ success: false, error: 'Job ID is required' });
 
-    const text = await extractionService.extractTextFromBuffer(req.file.buffer, req.file.mimetype);
+    const text = await extractionService.extractTextFromBuffer(req.file.buffer, req.file.mimetype, req.file.originalname);
     const { panelName, candidateName, panelMemberId, panelMemberEmail, jdText } = req.body;
     const data = await extractionService.extractL1(text, jobId, panelName, candidateName, panelMemberId, panelMemberEmail, jdText);
 
@@ -57,7 +57,7 @@ router.post('/l2', upload.single('file'), async (req, res) => {
     const { jobId, panelName, candidateName, panelMemberId, panelMemberEmail, jdText } = req.body;
     if (!jobId) return res.status(400).json({ success: false, error: 'Job ID is required' });
 
-    const text = await extractionService.extractTextFromBuffer(req.file.buffer, req.file.mimetype);
+    const text = await extractionService.extractTextFromBuffer(req.file.buffer, req.file.mimetype, req.file.originalname);
     const data = await extractionService.extractL2(text, jobId, panelName, candidateName, panelMemberId, panelMemberEmail, jdText);
 
 

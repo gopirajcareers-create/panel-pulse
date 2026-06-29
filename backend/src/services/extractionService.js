@@ -6,7 +6,7 @@
  */
 
 const mammoth = require('mammoth');
-const pdf = require('pdf-parse');
+const pdfParse = require('pdf-parse');   // v1.1.1 — callable function API
 const axios = require('axios');
 const XLSX = require('xlsx');
 
@@ -15,33 +15,33 @@ const TEMPERATURE = 0.1;
 const EXCEL_CELL_LIMIT = 30000; // Target under Excel's 32,767 to leave safety margin
 
 /**
- * Core text extraction from buffer (PDF, DOCX, XLSX)
+ * Core text extraction from buffer (PDF, DOCX, XLSX, TXT, CSV)
  */
-async function extractTextFromBuffer(buffer, mimetype) {
-  if (mimetype === 'application/pdf') {
-    const data = await pdf(buffer);
-    return data.text;
+async function extractTextFromBuffer(buffer, mimetype, originalname = '') {
+  const ext = originalname.toLowerCase().split('.').pop();
+  if (mimetype === 'application/pdf' || ext === 'pdf') {
+    const data = await pdfParse(buffer);
+    return (data.text || '').trim();
   } else if (
     mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-    mimetype === 'application/msword'
+    mimetype === 'application/msword' || ext === 'docx' || ext === 'doc'
   ) {
     const result = await mammoth.extractRawText({ buffer });
-    return result.value;
+    return result.value || '';
   } else if (
     mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    mimetype === 'application/vnd.ms-excel'
+    mimetype === 'application/vnd.ms-excel' || ext === 'xlsx' || ext === 'xls'
   ) {
     // Excel support
     const workbook = XLSX.read(buffer, { type: 'buffer' });
     let fullText = '';
     workbook.SheetNames.forEach(sheetName => {
       const sheet = workbook.Sheets[sheetName];
-      // Convert sheet to CSV string representation for the LLM
       const csv = XLSX.utils.sheet_to_csv(sheet);
       fullText += `--- Sheet: ${sheetName} ---\n${csv}\n\n`;
     });
     return fullText;
-  } else if (mimetype === 'text/plain' || mimetype === 'text/csv') {
+  } else if (mimetype === 'text/plain' || mimetype === 'text/csv' || ext === 'csv' || ext === 'txt') {
     return buffer.toString('utf-8');
   }
   return '';

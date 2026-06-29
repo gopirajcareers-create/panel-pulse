@@ -5,7 +5,7 @@ export function BrandSection() {
   const navigate = useNavigate();
   return (
     <button
-      onClick={() => navigate('/dashboard')}
+      onClick={() => navigate('/dashboard-i')}
       className="flex items-center gap-3 pb-6 mb-6 border-b border-white/[0.07] w-full text-left hover:opacity-80 transition-opacity"
     >
       <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center shrink-0">
