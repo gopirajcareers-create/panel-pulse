@@ -96,14 +96,24 @@ const THINKING_STEPS = [
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export function SmartExtractIForm() {
+interface SmartExtractIFormProps {
+  initialJobId?: string;
+  initialCandidateName?: string;
+  initialStage?: Stage;
+}
+
+export function SmartExtractIForm({
+  initialJobId = '',
+  initialCandidateName = '',
+  initialStage = 'stage1'
+}: SmartExtractIFormProps = {}) {
   const navigate = useNavigate();
-  const [activeStage, setActiveStage] = useState<Stage>('stage1');
+  const [activeStage, setActiveStage] = useState<Stage>(initialStage || 'stage1');
   const [completedStages, setCompletedStages] = useState<Set<Stage>>(new Set());
 
   // Shared identity fields
-  const [jdId, setJdId] = useState('');
-  const [candidateName, setCandidateName] = useState('');
+  const [jdId, setJdId] = useState(initialJobId);
+  const [candidateName, setCandidateName] = useState(initialCandidateName);
   const [panelName, setPanelName] = useState('');
   const [panelEmail, setPanelEmail] = useState('');
   const [panelId, setPanelId] = useState('');

@@ -14,7 +14,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import {
   ArrowLeft, Clock, User, FileText,
   Check, X, RefreshCw, Info,
-  ChevronDown, ChevronUp, Sparkles, Shield, Zap, Loader2, MessageSquare, RotateCcw
+  ChevronDown, ChevronUp, Sparkles, Shield, Zap, Loader2, MessageSquare, RotateCcw, Star
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -163,7 +163,7 @@ export default function CandidateResultsPage() {
   const renderActiveStageContent = () => {
     if (activeStage === 'stage1') {
       if (!detail.stage1 || !detail.stage1.completed) {
-        return <PendingStage label="Stage 1: Screening" stageId="stage1" />;
+        return <PendingStage label="Stage 1: Screening" stageId="stage1" jobId={jobId} candidateName={candidateName} />;
       }
       const analysis = detail.stage1.analysis;
       return (
@@ -294,7 +294,7 @@ export default function CandidateResultsPage() {
     if (activeStage === 'stage2') {
       const stageData = detail.stage2;
       if (!stageData || !stageData.completed) {
-        return <PendingStage label="Stage 2: L1 Scoring" stageId="stage2" />;
+        return <PendingStage label="Stage 2: L1 Scoring" stageId="stage2" jobId={jobId} candidateName={candidateName} />;
       }
       return <L1ResultsView stageData={stageData} panelName={detail.panelName} />;
     }
@@ -303,7 +303,7 @@ export default function CandidateResultsPage() {
     if (activeStage === 'stage3') {
       const stageData = detail.stage3;
       if (!stageData || !stageData.completed) {
-        return <PendingStage label="Stage 3: L2 Scoring" stageId="stage3" />;
+        return <PendingStage label="Stage 3: L2 Scoring" stageId="stage3" jobId={jobId} candidateName={candidateName} />;
       }
       return <L2ResultsView stageData={stageData} panelName={detail.panelName} />;
     }
@@ -311,7 +311,7 @@ export default function CandidateResultsPage() {
     // Stage 4: Client Audit
     if (activeStage === 'stage4') {
       if (!detail.stage4 || !detail.stage4.completed) {
-        return <PendingStage label="Stage 4: Client Audit" stageId="stage4" />;
+        return <PendingStage label="Stage 4: Client Audit" stageId="stage4" jobId={jobId} candidateName={candidateName} />;
       }
       return <ClientAuditView stageData={detail.stage4} />;
     }
@@ -587,8 +587,18 @@ function CollapsibleTextBox({ title, text, isOrange = false }: { title: string; 
 
 // ─── Pending Stage display ───────────────────────────────────────────────────
 
-function PendingStage({ label, stageId }: { label: string; stageId: StageId }) {
+function PendingStage({ label, stageId, jobId, candidateName }: { label: string; stageId: StageId; jobId: string; candidateName: string }) {
   const navigate = useNavigate();
+
+  const handleNavigateToUpload = () => {
+    const params = new URLSearchParams({
+      jobId,
+      candidateName,
+      stage: stageId
+    });
+    navigate(`/smart-extract-i?${params.toString()}`);
+  };
+
   return (
     <div className="bg-bg-card/40 border border-dashed border-white/10 rounded-2xl p-16 text-center space-y-4 max-w-2xl mx-auto mt-6 animate-in zoom-in-95 duration-200">
       <div className="w-12 h-12 rounded-full bg-white/[0.02] border border-white/10 flex items-center justify-center mx-auto">
@@ -601,7 +611,7 @@ function PendingStage({ label, stageId }: { label: string; stageId: StageId }) {
         </p>
       </div>
       <button
-        onClick={() => navigate('/smart-extract-i')}
+        onClick={handleNavigateToUpload}
         className="px-5 py-2.5 bg-indigo-500 hover:bg-indigo-600 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-indigo-500/20 flex items-center gap-2 mx-auto"
       >
         <Star className="w-4 h-4" />

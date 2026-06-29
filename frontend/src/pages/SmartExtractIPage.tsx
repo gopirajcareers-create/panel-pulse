@@ -1,16 +1,23 @@
 import { AppShell } from '@/components/layout/AppShell';
 import { SmartExtractIForm } from '@/components/features/smart-extract-i/SmartExtractIForm';
 import { ArrowLeft, Layers } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 export default function SmartExtractIPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // Get pre-fill data from URL params
+  const jobId = searchParams.get('jobId') || '';
+  const candidateName = searchParams.get('candidateName') || '';
+  const stage = searchParams.get('stage') || '';
+
   return (
     <AppShell>
       <div className="flex-1 overflow-y-auto bg-bg-base p-8">
         <div className="max-w-5xl mx-auto">
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate('/dashboard-i')}
             className="flex items-center gap-2 text-sm text-text-muted hover:text-text-primary transition-colors mb-6"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -36,7 +43,11 @@ export default function SmartExtractIPage() {
             </p>
           </div>
 
-          <SmartExtractIForm />
+          <SmartExtractIForm
+            initialJobId={jobId}
+            initialCandidateName={candidateName}
+            initialStage={stage as any}
+          />
         </div>
       </div>
     </AppShell>
