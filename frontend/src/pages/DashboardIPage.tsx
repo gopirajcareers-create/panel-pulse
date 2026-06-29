@@ -7,6 +7,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { pipelineApi, type PipelineCandidate } from '@/lib/api/pipeline.api';
 import toast from 'react-hot-toast';
+import { RestartButton } from '@/components/features/dashboard/RestartButton';
 
 export default function DashboardIPage() {
   const navigate = useNavigate();
@@ -80,6 +81,13 @@ export default function DashboardIPage() {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <RestartButton
+                type="dashboard-i"
+                onSuccess={() => {
+                  loadCandidates();
+                  toast.success('Pipeline restarted successfully');
+                }}
+              />
               <button onClick={loadCandidates} className="p-2.5 bg-white/[0.03] hover:bg-white/[0.06] text-text-primary rounded-xl border border-white/[0.05] transition-colors">
                 <RefreshCw className="w-4 h-4" />
               </button>
