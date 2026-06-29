@@ -105,7 +105,8 @@ export default function CandidateResultsPage() {
     try {
       await pipelineApi.restartFromStage(jobId, candidateName, stageId);
       toast.success(`Restarted from ${stageLabels[stageId]}`);
-      loadCandidateDetails();
+      // Navigate back to dashboard after restart
+      navigate('/dashboard-i');
     } catch (err: any) {
       console.error('Failed to restart from stage:', err);
       toast.error(err?.response?.data?.error || 'Failed to restart evaluation');

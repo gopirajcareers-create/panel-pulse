@@ -33,13 +33,14 @@ export default function DashboardIPage() {
 
   const handleRestartCandidate = async (jobId: string, candidateName: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent card click
-    if (!confirm(`Are you sure you want to restart the evaluation for ${candidateName}?`)) {
+    if (!confirm(`Are you sure you want to restart the entire evaluation for ${candidateName}? This will delete all stages.`)) {
       return;
     }
     try {
       // Call restart API endpoint
       await pipelineApi.restartCandidate(jobId, candidateName);
-      toast.success(`Evaluation restarted for ${candidateName}`);
+      toast.success(`Evaluation deleted for ${candidateName}`);
+      // Reload the candidates list to reflect the deletion
       loadCandidates();
     } catch (err: any) {
       console.error('Failed to restart candidate:', err);
