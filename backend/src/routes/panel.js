@@ -880,4 +880,248 @@ router.get('/insights/profile/:name', async (req, res) => {
   }
 });
 
+/**
+ * DELETE /api/v1/panel/restart/all
+ *
+ * Dashboard-level restart: Deletes ALL evaluation data
+ * Restricted to: gopiraj.k@indium.tech
+ */
+router.delete('/restart/all', async (req, res) => {
+  try {
+    const userEmail = req.user?.email || req.headers['x-user-email'];
+
+    // Authorization check
+    if (userEmail !== 'gopiraj.k@indium.tech') {
+      return res.status(403).json({
+        success: false,
+        error: 'Unauthorized: This operation is restricted to authorized users only.',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const { getDb } = require('../services/mongoClient');
+    const db = await getDb();
+
+    // Delete from both collections
+    const evalResult = await db.collection('panel_evaluations').deleteMany({});
+    const collResult = await db.collection('panel_collection').deleteMany({});
+
+    return res.status(200).json({
+      success: true,
+      message: 'All evaluation data deleted successfully',
+      deletedCounts: {
+        evaluations: evalResult.deletedCount,
+        panelCollection: collResult.deletedCount
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error in restart/all:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to delete evaluation data',
+      details: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * GET /api/v1/panel/stage-info/:evaluationId
+ *
+ * Get stage information for a specific evaluation to determine:
+ * - Current stage
+ * - Whether it's the last completed stage
+ * - What can be restarted
+ */
+router.get('/stage-info/:evaluationId', async (req, res) => {
+  try {
+    const { ObjectId } = require('mongodb');
+    const { getDb } = require('../services/mongoClient');
+    const db = await getDb();
+    const evalCollection = db.collection('panel_evaluations');
+
+    const evaluationId = req.params.evaluationId;
+
+    // Validate ObjectId
+    if (!ObjectId.isValid(evaluationId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid evaluation ID format',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const evaluation = await evalCollection.findOne({ _id: new ObjectId(evaluationId) });
+
+    if (!evaluation) {
+      return res.status(404).json({
+        success: false,
+        error: 'Evaluation not found',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Determine current stage based on what data exists
+    const stageInfo = _determineEvaluationStage(evaluation);
+
+    // Find if there are any later stages for this job/panel/candidate
+    const laterEvaluations = await evalCollection.find({
+      'Job Interview ID': evaluation['Job Interview ID'],
+      'Panel Name': evaluation['Panel Name'],
+      'Candidate Name': evaluation['Candidate Name'],
+      created_at: { $gt: evaluation.created_at }
+    }).toArray();
+
+    const isLastStage = laterEvaluations.length === 0;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        evaluationId: evaluationId,
+        currentStage: stageInfo.stage,
+        stageLabel: stageInfo.label,
+        isLastStage: isLastStage,
+        canRestart: isLastStage,
+        jobId: evaluation['Job Interview ID'],
+        panelName: evaluation['Panel Name'],
+        candidateName: evaluation['Candidate Name']
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error in stage-info:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to retrieve stage information',
+      details: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * DELETE /api/v1/panel/restart/stage/:evaluationId
+ *
+ * Stage-level restart: Reverse cascade deletion
+ * - Only works if this is the last completed stage
+ * - Deletes this stage and all subsequent stages
+ * Restricted to: gopiraj.k@indium.tech
+ */
+router.delete('/restart/stage/:evaluationId', async (req, res) => {
+  try {
+    const userEmail = req.user?.email || req.headers['x-user-email'];
+
+    // Authorization check
+    if (userEmail !== 'gopiraj.k@indium.tech') {
+      return res.status(403).json({
+        success: false,
+        error: 'Unauthorized: This operation is restricted to authorized users only.',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const { ObjectId } = require('mongodb');
+    const { getDb } = require('../services/mongoClient');
+    const db = await getDb();
+    const evalCollection = db.collection('panel_evaluations');
+
+    const evaluationId = req.params.evaluationId;
+
+    if (!ObjectId.isValid(evaluationId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid evaluation ID format',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    const evaluation = await evalCollection.findOne({ _id: new ObjectId(evaluationId) });
+
+    if (!evaluation) {
+      return res.status(404).json({
+        success: false,
+        error: 'Evaluation not found',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Check if this is the last stage
+    const laterEvaluations = await evalCollection.find({
+      'Job Interview ID': evaluation['Job Interview ID'],
+      'Panel Name': evaluation['Panel Name'],
+      'Candidate Name': evaluation['Candidate Name'],
+      created_at: { $gt: evaluation.created_at }
+    }).toArray();
+
+    if (laterEvaluations.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot restart: This is not the last completed stage. Only the most recent stage can be restarted.',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Perform cascade deletion: delete this evaluation and all with same or later timestamp
+    const deleteResult = await evalCollection.deleteMany({
+      'Job Interview ID': evaluation['Job Interview ID'],
+      'Panel Name': evaluation['Panel Name'],
+      'Candidate Name': evaluation['Candidate Name'],
+      created_at: { $gte: evaluation.created_at }
+    });
+
+    // Also clean up from panel_collection if needed
+    const collResult = await db.collection('panel_collection').deleteMany({
+      job_interview_id: evaluation['Job Interview ID'],
+      panel_name: evaluation['Panel Name'],
+      candidate_name: evaluation['Candidate Name']
+    });
+
+    const stageInfo = _determineEvaluationStage(evaluation);
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully restarted from ${stageInfo.label}`,
+      deletedCounts: {
+        evaluations: deleteResult.deletedCount,
+        panelCollection: collResult.deletedCount
+      },
+      stage: stageInfo.stage,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error in restart/stage:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to restart stage',
+      details: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * Helper function to determine evaluation stage
+ * @private
+ */
+function _determineEvaluationStage(evaluation) {
+  // Stage 4: Client Audit (has everything including L2 detailed validation)
+  if (evaluation.l2_detailed_validation && evaluation.l2_rejection_reasons && evaluation.l2_rejection_reasons.length > 0) {
+    return { stage: 'client_audit', label: 'Client Audit' };
+  }
+
+  // Stage 3: L2 Scoring (has L2 rejection reasons)
+  if (evaluation.l2_rejection_reasons && evaluation.l2_rejection_reasons.length > 0) {
+    return { stage: 'l2_scoring', label: 'L2 Scoring' };
+  }
+
+  // Stage 2: L1 Scoring (has score and evaluated)
+  if (evaluation.score !== null && evaluation.score !== undefined) {
+    return { stage: 'l1_scoring', label: 'L1 Scoring' };
+  }
+
+  // Stage 1: Initial Screening (data exists but not evaluated)
+  return { stage: 'initial_screening', label: 'Initial Screening' };
+}
+
 module.exports = router;

@@ -1,5 +1,6 @@
 import React from 'react';
 import { ExportButton } from './ExportButton';
+import { RestartButton } from '@/components/features/dashboard/RestartButton';
 import { ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -13,9 +14,14 @@ interface Props {
   evaluationData?: any | null;
   backUrl?: string;
   backLabel?: string;
+  stageInfo?: {
+    canRestart: boolean;
+    stageLabel: string;
+  } | null;
+  onRestart?: () => void;
 }
 
-export function EvaluationHeader({ jobId, panelName, candidateName, evaluationId, score, categories, evaluationData, backUrl, backLabel }: Props) {
+export function EvaluationHeader({ jobId, panelName, candidateName, evaluationId, score, categories, evaluationData, backUrl, backLabel, stageInfo, onRestart }: Props) {
   const navigate = useNavigate();
 
   return (
@@ -55,6 +61,14 @@ export function EvaluationHeader({ jobId, panelName, candidateName, evaluationId
       </div>
 
       <div className="flex-none flex items-center gap-3">
+        {stageInfo?.canRestart && evaluationId && (
+          <RestartButton
+            type="stage"
+            evaluationId={evaluationId}
+            stageName={stageInfo.stageLabel}
+            onSuccess={onRestart}
+          />
+        )}
         <ExportButton
           jobId={jobId}
           evaluationId={evaluationId}

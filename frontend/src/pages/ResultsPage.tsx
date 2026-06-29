@@ -7,8 +7,10 @@ import { PanelSummaryCard } from '@/components/features/evaluation/PanelSummaryC
 import { L2ValidatorCard } from '@/components/features/l2-validation/L2ValidatorCard';
 import { ModerationCard } from '@/components/features/evaluation/ModerationCard';
 import { EmptyState } from '@/components/common/EmptyState';
+import { RestartButton } from '@/components/features/dashboard/RestartButton';
 import { useEvaluationStore } from '@/lib/stores/evaluation.store';
 import { dashboardApi } from '@/lib/api/dashboard.api';
+import apiClient from '@/lib/api/client';
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -44,6 +46,7 @@ export default function ResultsPage() {
   const [cachedEvaluation, setCachedEvaluation] = useState<any>(null);
   const [loadingCached, setLoadingCached] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [stageInfo, setStageInfo] = useState<any>(null);
 
   const jobId = useEvaluationStore((s) => s.jobId);
   const panelScore = useEvaluationStore((s) => s.panelScore);
@@ -73,6 +76,20 @@ export default function ResultsPage() {
         console.error('Failed to load cached evaluation:', error);
         setFetchError(error?.response?.data?.error || error?.message || 'Failed to load evaluation details');
         setLoadingCached(false);
+      });
+  }, [evaluationId]);
+
+  // Fetch stage info for restart button
+  useEffect(() => {
+    if (!evaluationId) return;
+    apiClient.get(`/api/v1/panel/stage-info/${evaluationId}`)
+      .then(response => {
+        if (response.data.success) {
+          setStageInfo(response.data.data);
+        }
+      })
+      .catch(error => {
+        console.error('Failed to fetch stage info:', error);
       });
   }, [evaluationId]);
 
@@ -161,6 +178,8 @@ export default function ResultsPage() {
             evaluationData={cachedEvaluation}
             backUrl="/dashboard"
             backLabel="Back to Dashboard"
+            stageInfo={stageInfo}
+            onRestart={() => navigate('/dashboard')}
           />
 
           {/* Main Panel Efficiency Score */}

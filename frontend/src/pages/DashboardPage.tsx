@@ -10,6 +10,7 @@ import { PanelEfficiency } from '@/components/features/dashboard/PanelEfficiency
 import { SearchFilter, type SearchFilters } from '@/components/features/dashboard/SearchFilter';
 import { EvaluationsList } from '@/components/features/dashboard/EvaluationsList';
 import { AppShell } from '@/components/layout/AppShell';
+import { RestartButton } from '@/components/features/dashboard/RestartButton';
 import type { SearchResponse } from '@/types/dashboard.types';
 
 export default function DashboardPage() {
@@ -145,7 +146,17 @@ export default function DashboardPage() {
         {/* Lean Header */}
         <div className="bg-slate-800/40 border-b border-slate-700/50 backdrop-blur-sm">
           <div className="max-w-7xl mx-auto px-8 py-3">
-            <DashboardHeader />
+            <div className="flex items-center justify-between">
+              <DashboardHeader />
+              <RestartButton
+                type="dashboard"
+                onSuccess={() => {
+                  fetchStats();
+                  loadAllEvaluations(sortBy, sortOrder, scoreFilter);
+                  loadTotalPanels();
+                }}
+              />
+            </div>
           </div>
         </div>
 
