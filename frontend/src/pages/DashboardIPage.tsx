@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import {
   Layers, Search, FileText, Calendar, ArrowRight,
-  TrendingUp, Award, Clock, Sparkles, AlertCircle, RefreshCw
+  TrendingUp, Award, Clock, Sparkles, AlertCircle, RefreshCw, RotateCcw
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { pipelineApi, type PipelineCandidate } from '@/lib/api/pipeline.api';
@@ -28,6 +28,22 @@ export default function DashboardIPage() {
       setCandidates([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRestartCandidate = async (jobId: string, candidateName: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent card click
+    if (!confirm(`Are you sure you want to restart the evaluation for ${candidateName}?`)) {
+      return;
+    }
+    try {
+      // Call restart API endpoint
+      await pipelineApi.restartCandidate(jobId, candidateName);
+      toast.success(`Evaluation restarted for ${candidateName}`);
+      loadCandidates();
+    } catch (err: any) {
+      console.error('Failed to restart candidate:', err);
+      toast.error(err?.response?.data?.error || 'Failed to restart evaluation');
     }
   };
 
@@ -81,13 +97,6 @@ export default function DashboardIPage() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <RestartButton
-                type="dashboard-i"
-                onSuccess={() => {
-                  loadCandidates();
-                  toast.success('Pipeline restarted successfully');
-                }}
-              />
               <button onClick={loadCandidates} className="p-2.5 bg-white/[0.03] hover:bg-white/[0.06] text-text-primary rounded-xl border border-white/[0.05] transition-colors">
                 <RefreshCw className="w-4 h-4" />
               </button>
@@ -163,7 +172,7 @@ export default function DashboardIPage() {
                     onClick={() => navigate(`/dashboard-i/candidate?jobId=${c.jobId}&candidateName=${encodeURIComponent(c.candidateName)}`)}
                     className="group bg-white/[0.02] hover:bg-white/[0.04] border border-white/[0.05] hover:border-indigo-500/30 p-5 rounded-2xl transition-all cursor-pointer flex flex-col md:flex-row items-start md:items-center justify-between gap-6"
                   >
-                    <div className="space-y-2">
+                    <div className="space-y-2 flex-1">
                       <div className="flex items-center gap-3">
                         <h3 className="text-base font-extrabold text-text-primary group-hover:text-indigo-400 transition-colors">
                           {c.candidateName}
@@ -171,6 +180,13 @@ export default function DashboardIPage() {
                         <span className="px-2 py-0.5 bg-white/[0.04] border border-white/[0.06] text-text-muted rounded text-[10px] font-bold">
                           {c.jobId}
                         </span>
+                        <button
+                          onClick={(e) => handleRestartCandidate(c.jobId, c.candidateName, e)}
+                          className="ml-auto p-1.5 hover:bg-orange-500/10 text-text-muted hover:text-orange-400 rounded-lg transition-all border border-transparent hover:border-orange-500/30"
+                          title="Restart evaluation"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                        </button>
                       </div>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-muted">
                         <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Updated: {date}</span>

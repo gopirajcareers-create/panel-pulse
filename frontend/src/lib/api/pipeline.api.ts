@@ -278,5 +278,19 @@ export const pipelineApi = {
   }> {
     const response = await apiClient.post('/api/v1/pipeline/generate-l1-questions', { jobId, candidateName });
     return response.data.data;
+  },
+
+  async restartCandidate(jobId: string, candidateName: string): Promise<any> {
+    const response = await apiClient.post('/api/v1/pipeline/restart', { jobId, candidateName });
+    return response.data;
+  },
+
+  async restartFromStage(jobId: string, candidateName: string, stageId: string): Promise<any> {
+    const response = await apiClient.post('/api/v1/pipeline/restart-stage', {
+      jobId,
+      candidateName,
+      stageId
+    });
+    return response.data;
   }
 };

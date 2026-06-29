@@ -14,7 +14,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import {
   ArrowLeft, Clock, User, FileText,
   Check, X, RefreshCw, Info,
-  ChevronDown, ChevronUp, Sparkles, Shield, Zap, Loader2, MessageSquare
+  ChevronDown, ChevronUp, Sparkles, Shield, Zap, Loader2, MessageSquare, RotateCcw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -89,6 +89,39 @@ export default function CandidateResultsPage() {
       setGeneratingQuestions(false);
     }
   };
+
+  const handleRestartFromStage = async (stageId: StageId) => {
+    const stageLabels: Record<StageId, string> = {
+      stage1: 'Stage 1 (Screening)',
+      stage2: 'Stage 2 (L1 Scoring)',
+      stage3: 'Stage 3 (L2 Scoring)',
+      stage4: 'Stage 4 (Client Audit)'
+    };
+
+    if (!confirm(`Are you sure you want to restart from ${stageLabels[stageId]}? This will delete all data from this stage onwards.`)) {
+      return;
+    }
+
+    try {
+      await pipelineApi.restartFromStage(jobId, candidateName, stageId);
+      toast.success(`Restarted from ${stageLabels[stageId]}`);
+      loadCandidateDetails();
+    } catch (err: any) {
+      console.error('Failed to restart from stage:', err);
+      toast.error(err?.response?.data?.error || 'Failed to restart evaluation');
+    }
+  };
+
+  // Find the last completed stage
+  const getLastCompletedStage = (): StageId | null => {
+    if (detail?.stage4?.completed) return 'stage4';
+    if (detail?.stage3?.completed) return 'stage3';
+    if (detail?.stage2?.completed) return 'stage2';
+    if (detail?.stage1?.completed) return 'stage1';
+    return null;
+  };
+
+  const lastCompletedStage = detail ? getLastCompletedStage() : null;
 
   if (loading) {
     return (
@@ -335,22 +368,33 @@ export default function CandidateResultsPage() {
               {STAGES.map((s) => {
                 const active = activeStage === s.id;
                 const done = completedStages.has(s.id);
+                const isLastCompleted = lastCompletedStage === s.id;
                 return (
-                  <button
-                    key={s.id}
-                    onClick={() => setActiveStage(s.id)}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide transition-all border ${
-                      active ? `${s.bgColor} ${s.color} ${s.borderColor} shadow-sm` :
-                      done ? 'bg-emerald-500/5 text-emerald-400 border-emerald-500/10 hover:bg-emerald-500/10' :
-                      'bg-transparent text-text-muted border-transparent hover:bg-white/[0.03] hover:text-text-primary'
-                    }`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full ${
-                      active ? 'bg-current animate-pulse' :
-                      done ? 'bg-emerald-400' : 'bg-white/20'
-                    }`} />
-                    {s.label}
-                  </button>
+                  <div key={s.id} className="flex items-center gap-1">
+                    <button
+                      onClick={() => setActiveStage(s.id)}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold tracking-wide transition-all border ${
+                        active ? `${s.bgColor} ${s.color} ${s.borderColor} shadow-sm` :
+                        done ? 'bg-emerald-500/5 text-emerald-400 border-emerald-500/10 hover:bg-emerald-500/10' :
+                        'bg-transparent text-text-muted border-transparent hover:bg-white/[0.03] hover:text-text-primary'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        active ? 'bg-current animate-pulse' :
+                        done ? 'bg-emerald-400' : 'bg-white/20'
+                      }`} />
+                      {s.label}
+                    </button>
+                    {isLastCompleted && (
+                      <button
+                        onClick={() => handleRestartFromStage(s.id)}
+                        className="p-1.5 hover:bg-orange-500/10 text-text-muted hover:text-orange-400 rounded-lg transition-all border border-transparent hover:border-orange-500/30"
+                        title={`Restart from ${s.label}`}
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>
