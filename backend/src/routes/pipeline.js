@@ -995,4 +995,118 @@ router.get('/candidate', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/v1/pipeline/restart
+ * Restart entire candidate evaluation (delete all data)
+ */
+router.post('/restart', async (req, res) => {
+  try {
+    const { jobId, candidateName } = req.body;
+
+    if (!jobId || !candidateName) {
+      return res.status(400).json({
+        success: false,
+        error: 'jobId and candidateName are required'
+      });
+    }
+
+    const db = await getDb();
+    const pipelineCol = db.collection('pipeline_evaluations');
+
+    const result = await pipelineCol.deleteOne({
+      jobId: jobId.trim(),
+      candidateName: candidateName.trim()
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Candidate not found in pipeline'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Candidate evaluation restarted successfully'
+    });
+  } catch (error) {
+    console.error('Error restarting candidate:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/v1/pipeline/restart-stage
+ * Restart from a specific stage (delete data from that stage onwards)
+ */
+router.post('/restart-stage', async (req, res) => {
+  try {
+    const { jobId, candidateName, stageId } = req.body;
+
+    if (!jobId || !candidateName || !stageId) {
+      return res.status(400).json({
+        success: false,
+        error: 'jobId, candidateName, and stageId are required'
+      });
+    }
+
+    const db = await getDb();
+    const pipelineCol = db.collection('pipeline_evaluations');
+
+    // Map stage IDs to fields to unset
+    const stageFieldsMap = {
+      stage1: ['stage1', 'stage2', 'stage3', 'stage4'],
+      stage2: ['stage2', 'stage3', 'stage4'],
+      stage3: ['stage3', 'stage4'],
+      stage4: ['stage4']
+    };
+
+    const fieldsToUnset = stageFieldsMap[stageId];
+    if (!fieldsToUnset) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid stageId. Must be one of: stage1, stage2, stage3, stage4'
+      });
+    }
+
+    // Build the $unset operation
+    const unsetOperation = {};
+    fieldsToUnset.forEach(field => {
+      unsetOperation[field] = '';
+    });
+
+    // Also update completedStages array
+    const result = await pipelineCol.updateOne(
+      {
+        jobId: jobId.trim(),
+        candidateName: candidateName.trim()
+      },
+      {
+        $unset: unsetOperation,
+        $pull: {
+          completedStages: { $in: fieldsToUnset }
+        },
+        $set: {
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Candidate not found in pipeline'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully restarted from ${stageId}`
+    });
+  } catch (error) {
+    console.error('Error restarting from stage:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 module.exports = router;
