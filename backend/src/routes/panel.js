@@ -881,6 +881,161 @@ router.get('/insights/profile/:name', async (req, res) => {
 });
 
 /**
+ * GET /api/v1/panel/insights/evaluations
+ *
+ * Get individual panel evaluation records with stage information
+ * Query params: stage (optional: 'all', 'L1', 'L2'), sort_by, order
+ * Now includes both old panel_evaluations and new pipeline_evaluations
+ */
+router.get('/insights/evaluations', async (req, res) => {
+  try {
+    const { getDb } = require('../services/mongoClient');
+    const db = await getDb();
+    const evalCollection = db.collection('panel_evaluations');
+    const pipelineCollection = db.collection('pipeline_evaluations');
+
+    const { stage = 'all', sort_by = 'evaluated_at', order = 'desc' } = req.query;
+
+    // ── Fetch OLD panel_evaluations ──
+    const filter = {
+      'Panel Name': { $exists: true, $ne: null, $ne: '' },
+      'Candidate Name': { $exists: true, $ne: null, $ne: '' }
+    };
+
+    if (stage === 'L1') {
+      filter['score'] = { $exists: true, $ne: null };
+      filter['l2_rejection_reasons'] = { $exists: false };
+    } else if (stage === 'L2') {
+      filter['l2_rejection_reasons'] = { $exists: true, $ne: [] };
+    }
+
+    let sortField = sort_by;
+    if (sort_by === 'panelName') sortField = 'Panel Name';
+    if (sort_by === 'candidateName') sortField = 'Candidate Name';
+    if (sort_by === 'score') sortField = 'score';
+    if (sort_by === 'stage') sortField = 'l2_rejection_reasons';
+    if (sort_by === 'evaluated_at') sortField = 'evaluated_at';
+
+    const sortOrder = order === 'asc' ? 1 : -1;
+
+    const evaluations = await evalCollection
+      .find(filter)
+      .sort({ [sortField]: sortOrder })
+      .toArray();
+
+    const formattedOldEvaluations = evaluations.map(doc => {
+      const stageInfo = _determineEvaluationStage(doc);
+      const stageLabel = (stageInfo.stage === 'l2_scoring' || stageInfo.stage === 'client_audit') ? 'L2' : 'L1';
+
+      return {
+        evaluationId: doc._id.toString(),
+        jobInterviewId: doc['Job Interview ID'] || 'N/A',
+        panelName: doc['Panel Name'] || 'Unknown',
+        candidateName: doc['Candidate Name'] || 'Unknown',
+        panelScore: doc.score || 0,
+        stage: stageLabel,
+        evaluatedAt: doc.evaluated_at
+          ? new Date(doc.evaluated_at).toISOString().split('T')[0]
+          : new Date().toISOString().split('T')[0]
+      };
+    });
+
+    // ── Fetch NEW pipeline_evaluations ──
+    const pipelineDocs = await pipelineCollection
+      .find({
+        panelName: { $exists: true, $ne: null, $ne: '' },
+        candidateName: { $exists: true, $ne: null, $ne: '' }
+      })
+      .toArray();
+
+    const formattedPipelineEvaluations = pipelineDocs
+      .map(doc => {
+        // Find the latest completed stage
+        const completedStages = doc.completedStages || [];
+        if (completedStages.length === 0) return null; // Skip if no stages completed
+
+        let latestStage = null;
+        let latestScore = null;
+        let stageLabel = 'L1';
+
+        // Check stages in reverse order (stage4 -> stage3 -> stage2 -> stage1)
+        if (completedStages.includes('stage4') && doc.stage4?.completed) {
+          latestStage = doc.stage4;
+          stageLabel = 'L2'; // Stage 4 is client audit (after L2)
+        } else if (completedStages.includes('stage3') && doc.stage3?.completed) {
+          latestStage = doc.stage3;
+          latestScore = doc.stage3.evaluation?.score || null;
+          stageLabel = 'L2';
+        } else if (completedStages.includes('stage2') && doc.stage2?.completed) {
+          latestStage = doc.stage2;
+          latestScore = doc.stage2.evaluation?.score || null;
+          stageLabel = 'L1';
+        } else if (completedStages.includes('stage1') && doc.stage1?.completed) {
+          latestStage = doc.stage1;
+          stageLabel = 'L1'; // Stage 1 is screening
+        }
+
+        if (!latestStage) return null;
+
+        // Apply stage filter
+        if (stage === 'L1' && stageLabel !== 'L1') return null;
+        if (stage === 'L2' && stageLabel !== 'L2') return null;
+
+        return {
+          evaluationId: doc._id.toString(),
+          jobInterviewId: doc.jobId || 'N/A',
+          panelName: doc.panelName || 'Unknown',
+          candidateName: doc.candidateName || 'Unknown',
+          panelScore: latestScore || 0,
+          stage: stageLabel,
+          evaluatedAt: latestStage.completedAt
+            ? new Date(latestStage.completedAt).toISOString().split('T')[0]
+            : new Date().toISOString().split('T')[0]
+        };
+      })
+      .filter(Boolean); // Remove nulls
+
+    // ── Merge and sort ──
+    const allEvaluations = [...formattedOldEvaluations, ...formattedPipelineEvaluations];
+
+    // Sort by the requested field
+    allEvaluations.sort((a, b) => {
+      let aVal = a[sort_by] || '';
+      let bVal = b[sort_by] || '';
+
+      if (sort_by === 'evaluated_at') {
+        aVal = new Date(a.evaluatedAt);
+        bVal = new Date(b.evaluatedAt);
+      } else if (sort_by === 'score' || sort_by === 'panelScore') {
+        aVal = a.panelScore;
+        bVal = b.panelScore;
+      }
+
+      if (order === 'asc') {
+        return aVal > bVal ? 1 : -1;
+      } else {
+        return aVal < bVal ? 1 : -1;
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: allEvaluations,
+      total: allEvaluations.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching panel evaluations:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to fetch panel evaluations',
+      details: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
  * DELETE /api/v1/panel/restart/all
  *
  * Dashboard-level restart: Deletes ALL evaluation data
