@@ -28,6 +28,7 @@ interface PanelProfileData {
     candidateName: string;
     score: number;
     date: string;
+    isPipeline?: boolean;
   }>;
 }
 
@@ -307,11 +308,22 @@ export default function PanelProfilePage() {
                 <tbody className="divide-y divide-white/[0.06]">
                   {data.history.map((h, i) => {
                     const rowCat = h.score >= 8 ? 'text-emerald-400' : h.score >= 5 ? 'text-orange-400' : 'text-red-400';
+
+                    const handleClick = () => {
+                      if (h.isPipeline) {
+                        // Navigate to pipeline candidate results page
+                        navigate(`/dashboard-i/candidate?jobId=${encodeURIComponent(h.jobId)}&candidateName=${encodeURIComponent(h.candidateName)}`);
+                      } else {
+                        // Navigate to old results page
+                        navigate(`/results/${h.id}`);
+                      }
+                    };
+
                     return (
                       <tr key={h.id || i} className="hover:bg-white/[0.01] transition-colors">
                         <td className="px-6 py-4 font-medium text-text-primary">
                           <button
-                            onClick={() => navigate(`/results/${h.id}`)}
+                            onClick={handleClick}
                             className="text-indigo-400 hover:text-indigo-300 hover:underline transition-colors focus:outline-none"
                             title="View Full Report"
                           >

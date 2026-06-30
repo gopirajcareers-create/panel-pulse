@@ -871,7 +871,8 @@ router.get('/insights/profile/:name', async (req, res) => {
         jobId: doc.jobId,
         candidateName: doc.candidateName,
         score: latestScore,
-        date: latestDate ? new Date(latestDate).toISOString().split('T')[0] : 'N/A'
+        date: latestDate ? new Date(latestDate).toISOString().split('T')[0] : 'N/A',
+        isPipeline: true // Flag to indicate this is a pipeline evaluation
       };
     }).filter(item => item.score !== null); // Only include items with scores
 
