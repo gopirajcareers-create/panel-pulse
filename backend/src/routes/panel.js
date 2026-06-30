@@ -780,8 +780,9 @@ router.get('/insights/directory', async (req, res) => {
 
 /**
  * GET /api/v1/panel/insights/profile/:name
- * 
+ *
  * Get detailed history and dimension averages for a specific panelist
+ * Now includes both old panel_evaluations and new pipeline_evaluations
  */
 router.get('/insights/profile/:name', async (req, res) => {
   try {
@@ -789,24 +790,33 @@ router.get('/insights/profile/:name', async (req, res) => {
     const { getDb } = require('../services/mongoClient');
     const db = await getDb();
     const evalCollection = db.collection('panel_evaluations');
+    const pipelineCollection = db.collection('pipeline_evaluations');
 
-    const evaluations = await evalCollection
+    // Fetch OLD evaluations
+    const oldEvaluations = await evalCollection
       .find({ 'Panel Name': panelName })
-      .sort({ created_at: 1 }) // Chronological for line charts
+      .sort({ created_at: 1 })
       .toArray();
 
-    if (evaluations.length === 0) {
+    // Fetch NEW pipeline evaluations
+    const pipelineDocs = await pipelineCollection
+      .find({ panelName: panelName })
+      .sort({ updatedAt: 1 })
+      .toArray();
+
+    // Check if any data exists
+    if (oldEvaluations.length === 0 && pipelineDocs.length === 0) {
       return res.status(404).json({ success: false, error: 'Panelist not found' });
     }
 
-    // Averages
+    // Process OLD evaluations
     let totalScore = 0;
     const categorySums = {};
     const categoryCounts = {};
 
-    const history = evaluations.map(doc => {
+    const oldHistory = oldEvaluations.map(doc => {
       totalScore += (doc.score || 0);
-      
+
       if (doc.categories) {
         for (const [key, val] of Object.entries(doc.categories)) {
           categorySums[key] = (categorySums[key] || 0) + val;
@@ -822,7 +832,56 @@ router.get('/insights/profile/:name', async (req, res) => {
       };
     });
 
-    const averageScore = Math.round((totalScore / evaluations.length) * 10) / 10;
+    // Process NEW pipeline evaluations
+    const pipelineHistory = pipelineDocs.map(doc => {
+      // Find latest completed stage with score
+      let latestScore = null;
+      let latestDate = doc.updatedAt;
+
+      if (doc.completedStages?.includes('stage3') && doc.stage3?.evaluation?.score) {
+        latestScore = doc.stage3.evaluation.score;
+        latestDate = doc.stage3.completedAt;
+
+        // Add stage3 categories to averages
+        if (doc.stage3.evaluation.categories) {
+          for (const [key, val] of Object.entries(doc.stage3.evaluation.categories)) {
+            categorySums[key] = (categorySums[key] || 0) + val;
+            categoryCounts[key] = (categoryCounts[key] || 0) + 1;
+          }
+        }
+      } else if (doc.completedStages?.includes('stage2') && doc.stage2?.evaluation?.score) {
+        latestScore = doc.stage2.evaluation.score;
+        latestDate = doc.stage2.completedAt;
+
+        // Add stage2 categories to averages
+        if (doc.stage2.evaluation.categories) {
+          for (const [key, val] of Object.entries(doc.stage2.evaluation.categories)) {
+            categorySums[key] = (categorySums[key] || 0) + val;
+            categoryCounts[key] = (categoryCounts[key] || 0) + 1;
+          }
+        }
+      }
+
+      if (latestScore !== null) {
+        totalScore += latestScore;
+      }
+
+      return {
+        id: doc._id.toString(),
+        jobId: doc.jobId,
+        candidateName: doc.candidateName,
+        score: latestScore,
+        date: latestDate ? new Date(latestDate).toISOString().split('T')[0] : 'N/A'
+      };
+    }).filter(item => item.score !== null); // Only include items with scores
+
+    // Merge and sort history by date
+    const history = [...oldHistory, ...pipelineHistory].sort((a, b) => {
+      return new Date(a.date) - new Date(b.date);
+    });
+
+    const totalEvaluations = oldEvaluations.length + pipelineHistory.length;
+    const averageScore = totalEvaluations > 0 ? Math.round((totalScore / totalEvaluations) * 10) / 10 : 0;
     
     // Calculate dimension averages
     const dimensionAverages = {};
@@ -834,13 +893,9 @@ router.get('/insights/profile/:name', async (req, res) => {
     let employeeId = 'N/A';
     let email = 'N/A';
     try {
-      const { getDb } = require('../services/mongoClient');
-      const db = await getDb();
-      const evalCollection = db.collection('panel_evaluations');
-      
-      // Find the most recent evaluation for this panel that has ID or Email
+      // Try old evaluations first
       const latestWithInfo = await evalCollection.findOne(
-        { 
+        {
           'Panel Name': panelName,
           $or: [
             { panel_member_id: { $ne: '', $exists: true } },
@@ -854,6 +909,25 @@ router.get('/insights/profile/:name', async (req, res) => {
         employeeId = latestWithInfo.panel_member_id || 'N/A';
         email = latestWithInfo.panel_member_email || 'N/A';
       }
+
+      // If not found, try pipeline evaluations
+      if (employeeId === 'N/A' && email === 'N/A') {
+        const pipelineWithInfo = await pipelineCollection.findOne(
+          {
+            panelName: panelName,
+            $or: [
+              { panelId: { $ne: '', $exists: true } },
+              { panelEmail: { $ne: '', $exists: true } }
+            ]
+          },
+          { sort: { updatedAt: -1 } }
+        );
+
+        if (pipelineWithInfo) {
+          employeeId = pipelineWithInfo.panelId || 'N/A';
+          email = pipelineWithInfo.panelEmail || 'N/A';
+        }
+      }
     } catch (e) {
       console.warn("Failed to fetch panel details from DB:", e);
     }
@@ -864,7 +938,7 @@ router.get('/insights/profile/:name', async (req, res) => {
         panelName,
         employeeId,
         email,
-        totalEvaluations: evaluations.length,
+        totalEvaluations,
         averageScore,
         dimensionAverages,
         history
