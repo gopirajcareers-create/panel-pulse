@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import {
-  Layers, Search, FileText, Calendar, ArrowRight,
+  Layers, Search, FileText, Calendar, ArrowRight, Download,
   TrendingUp, Award, Clock, Sparkles, AlertCircle, RefreshCw, RotateCcw
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { pipelineApi, type PipelineCandidate } from '@/lib/api/pipeline.api';
+import { pipelineApi, type PipelineCandidate, type PipelineDetail } from '@/lib/api/pipeline.api';
 import toast from 'react-hot-toast';
 import { RestartButton } from '@/components/features/dashboard/RestartButton';
+import { generateReport } from '@/lib/utils/reportGenerator';
 
 export default function DashboardIPage() {
   const navigate = useNavigate();
@@ -15,6 +16,7 @@ export default function DashboardIPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [downloadingReports, setDownloadingReports] = useState<Set<string>>(new Set());
 
   const loadCandidates = async () => {
     setLoading(true);
@@ -45,6 +47,33 @@ export default function DashboardIPage() {
     } catch (err: any) {
       console.error('Failed to restart candidate:', err);
       toast.error(err?.response?.data?.error || 'Failed to restart evaluation');
+    }
+  };
+
+  const handleDownloadReport = async (jobId: string, candidateName: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent card click
+    const key = `${jobId}-${candidateName}`;
+
+    if (downloadingReports.has(key)) return;
+
+    setDownloadingReports(prev => new Set([...prev, key]));
+
+    try {
+      // Fetch full candidate detail for report generation
+      const detail: PipelineDetail = await pipelineApi.getCandidate(jobId, candidateName);
+
+      // Generate PDF report
+      await generateReport({ data: detail, stageId: 'overall', format: 'pdf' });
+      toast.success(`Report downloaded for ${candidateName}`);
+    } catch (err: any) {
+      console.error('Failed to download report:', err);
+      toast.error(err?.response?.data?.error || 'Failed to download report');
+    } finally {
+      setDownloadingReports(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(key);
+        return newSet;
+      });
     }
   };
 
@@ -167,6 +196,9 @@ export default function DashboardIPage() {
                       day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
                     })
                   : 'N/A';
+                const isDownloading = downloadingReports.has(`${c.jobId}-${c.candidateName}`);
+                const hasCompletedStages = c.completedStages && c.completedStages.length > 0;
+
                 return (
                   <div
                     key={c.id}
@@ -181,9 +213,23 @@ export default function DashboardIPage() {
                         <span className="px-2 py-0.5 bg-white/[0.04] border border-white/[0.06] text-text-muted rounded text-[10px] font-bold">
                           {c.jobId}
                         </span>
+                        {hasCompletedStages && (
+                          <button
+                            onClick={(e) => handleDownloadReport(c.jobId, c.candidateName, e)}
+                            disabled={isDownloading}
+                            className="ml-auto p-1.5 hover:bg-indigo-500/10 text-text-muted hover:text-indigo-400 rounded-lg transition-all border border-transparent hover:border-indigo-500/30 disabled:opacity-50"
+                            title="Download Report"
+                          >
+                            {isDownloading ? (
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Download className="w-4 h-4" />
+                            )}
+                          </button>
+                        )}
                         <button
                           onClick={(e) => handleRestartCandidate(c.jobId, c.candidateName, e)}
-                          className="ml-auto p-1.5 hover:bg-orange-500/10 text-text-muted hover:text-orange-400 rounded-lg transition-all border border-transparent hover:border-orange-500/30"
+                          className="p-1.5 hover:bg-orange-500/10 text-text-muted hover:text-orange-400 rounded-lg transition-all border border-transparent hover:border-orange-500/30"
                           title="Restart evaluation"
                         >
                           <RotateCcw className="w-4 h-4" />
@@ -192,6 +238,12 @@ export default function DashboardIPage() {
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-text-muted">
                         <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Updated: {date}</span>
                         {c.panelName && <span className="flex items-center gap-1">Panel: {c.panelName}</span>}
+                        {hasCompletedStages && (
+                          <span className="flex items-center gap-1 text-indigo-400">
+                            <Download className="w-3.5 h-3.5" />
+                            Report Available
+                          </span>
+                        )}
                       </div>
                     </div>
 

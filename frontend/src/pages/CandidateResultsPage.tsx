@@ -11,6 +11,7 @@ import { L1ResultsView } from '@/components/features/stage2/L1ResultsView';
 import { L2ResultsView } from '@/components/features/stage3/L2ResultsView';
 import { ClientAuditView } from '@/components/features/stage4/ClientAuditView';
 import { EmptyState } from '@/components/common/EmptyState';
+import { ReportDownloadButton } from '@/components/features/reports/ReportDownloadButton';
 import {
   ArrowLeft, Clock, User, FileText,
   Check, X, RefreshCw, Info,
@@ -168,6 +169,15 @@ export default function CandidateResultsPage() {
       const analysis = detail.stage1.analysis;
       return (
         <div className="space-y-6">
+          {/* Stage Report Download */}
+          <div className="flex items-center justify-between bg-white/[0.02] border border-white/[0.05] p-4 rounded-xl">
+            <div>
+              <h3 className="text-sm font-bold text-text-primary">Stage 1 Report</h3>
+              <p className="text-xs text-text-muted mt-0.5">Download screening analysis and skills coverage</p>
+            </div>
+            <ReportDownloadButton data={detail} stageId="stage1" variant="secondary" showBothFormats={false} />
+          </div>
+
           {/* Status & Summary Cards Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
             {/* Match Score & Status card */}
@@ -296,7 +306,19 @@ export default function CandidateResultsPage() {
       if (!stageData || !stageData.completed) {
         return <PendingStage label="Stage 2: L1 Scoring" stageId="stage2" jobId={jobId} candidateName={candidateName} />;
       }
-      return <L1ResultsView stageData={stageData} panelName={detail.panelName} />;
+      return (
+        <div className="space-y-6">
+          {/* Stage Report Download */}
+          <div className="flex items-center justify-between bg-white/[0.02] border border-white/[0.05] p-4 rounded-xl">
+            <div>
+              <h3 className="text-sm font-bold text-text-primary">Stage 2 Report</h3>
+              <p className="text-xs text-text-muted mt-0.5">Download L1 scoring and dimension analysis</p>
+            </div>
+            <ReportDownloadButton data={detail} stageId="stage2" variant="secondary" showBothFormats={false} />
+          </div>
+          <L1ResultsView stageData={stageData} panelName={detail.panelName} />
+        </div>
+      );
     }
 
     // ── Stage 3: L2 Scoring (new l2ScoringService schema) ──────────────────
@@ -305,7 +327,19 @@ export default function CandidateResultsPage() {
       if (!stageData || !stageData.completed) {
         return <PendingStage label="Stage 3: L2 Scoring" stageId="stage3" jobId={jobId} candidateName={candidateName} />;
       }
-      return <L2ResultsView stageData={stageData} panelName={detail.panelName} />;
+      return (
+        <div className="space-y-6">
+          {/* Stage Report Download */}
+          <div className="flex items-center justify-between bg-white/[0.02] border border-white/[0.05] p-4 rounded-xl">
+            <div>
+              <h3 className="text-sm font-bold text-text-primary">Stage 3 Report</h3>
+              <p className="text-xs text-text-muted mt-0.5">Download L2 scoring and candidate status analysis</p>
+            </div>
+            <ReportDownloadButton data={detail} stageId="stage3" variant="secondary" showBothFormats={false} />
+          </div>
+          <L2ResultsView stageData={stageData} panelName={detail.panelName} />
+        </div>
+      );
     }
 
     // Stage 4: Client Audit
@@ -313,7 +347,19 @@ export default function CandidateResultsPage() {
       if (!detail.stage4 || !detail.stage4.completed) {
         return <PendingStage label="Stage 4: Client Audit" stageId="stage4" jobId={jobId} candidateName={candidateName} />;
       }
-      return <ClientAuditView stageData={detail.stage4} />;
+      return (
+        <div className="space-y-6">
+          {/* Stage Report Download */}
+          <div className="flex items-center justify-between bg-white/[0.02] border border-white/[0.05] p-4 rounded-xl">
+            <div>
+              <h3 className="text-sm font-bold text-text-primary">Stage 4 Report</h3>
+              <p className="text-xs text-text-muted mt-0.5">Download client audit and recommendations</p>
+            </div>
+            <ReportDownloadButton data={detail} stageId="stage4" variant="secondary" showBothFormats={false} />
+          </div>
+          <ClientAuditView stageData={detail.stage4} />
+        </div>
+      );
     }
 
     return null;
@@ -338,33 +384,40 @@ export default function CandidateResultsPage() {
           </div>
 
           {/* Header Card */}
-          <div className="bg-white/[0.02] border border-white/[0.05] p-6 rounded-2xl backdrop-blur-md flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="flex items-start gap-4">
-              <div className="p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-xl mt-1">
-                <User className="w-7 h-7 text-indigo-400" />
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-3">
-                  <h1 className="text-2xl font-black text-orange-500 tracking-tight">{detail.candidateName}</h1>
-                  {activeStage === 'stage4' && detail.stage3?.candidateStatus && (
-                    <span className={`px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest border ${
-                      detail.stage3.candidateStatus === 'Selected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'
-                    }`}>
-                      Stage 3: {detail.stage3.candidateStatus}
+          <div className="bg-white/[0.02] border border-white/[0.05] p-6 rounded-2xl backdrop-blur-md space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-indigo-500/10 border border-indigo-500/30 rounded-xl mt-1">
+                  <User className="w-7 h-7 text-indigo-400" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-3">
+                    <h1 className="text-2xl font-black text-orange-500 tracking-tight">{detail.candidateName}</h1>
+                    {activeStage === 'stage4' && detail.stage3?.candidateStatus && (
+                      <span className={`px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest border ${
+                        detail.stage3.candidateStatus === 'Selected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'
+                      }`}>
+                        Stage 3: {detail.stage3.candidateStatus}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-text-muted font-medium">
+                    <span className="px-2 py-0.5 bg-white/[0.04] border border-white/[0.06] text-text-muted rounded font-bold">
+                      ID: {detail.jobId}
                     </span>
-                  )}
+                    <span>Panel: {detail.panelName || 'N/A'}</span>
+                    <span>Email: {detail.panelEmail || 'N/A'}</span>
+                  </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-text-muted font-medium">
-                  <span className="px-2 py-0.5 bg-white/[0.04] border border-white/[0.06] text-text-muted rounded font-bold">
-                    ID: {detail.jobId}
-                  </span>
-                  <span>Panel: {detail.panelName || 'N/A'}</span>
-                  <span>Email: {detail.panelEmail || 'N/A'}</span>
-                </div>
+              </div>
+
+              {/* Overall Report Download Button */}
+              <div className="flex items-center gap-3">
+                <ReportDownloadButton data={detail} stageId="overall" variant="primary" showBothFormats={true} />
               </div>
             </div>
 
-            {/* Stage Selector (clickable, moved here) */}
+            {/* Stage Selector (clickable) */}
             <div className="flex flex-wrap items-center gap-2 bg-white/[0.01] border border-white/[0.05] p-2 rounded-xl">
               {STAGES.map((s) => {
                 const active = activeStage === s.id;
