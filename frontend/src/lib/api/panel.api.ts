@@ -165,4 +165,15 @@ export const panelApi = {
     const response = await apiClient.get(`/api/v1/panel/insights/profile/${encodeURIComponent(panelName)}`);
     return response.data;
   },
+
+  async getPanelEvaluations(params?: { stage?: string; sort_by?: string; order?: string }) {
+    const queryParams = new URLSearchParams();
+    if (params?.stage) queryParams.append('stage', params.stage);
+    if (params?.sort_by) queryParams.append('sort_by', params.sort_by);
+    if (params?.order) queryParams.append('order', params.order);
+
+    const url = `/api/v1/panel/insights/evaluations${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    const response = await apiClient.get(url);
+    return response.data;
+  },
 };

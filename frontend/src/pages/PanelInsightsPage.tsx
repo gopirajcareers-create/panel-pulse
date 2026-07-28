@@ -2,94 +2,176 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
 import { panelApi } from '@/lib/api/panel.api';
-import { Users, Search, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Users, Search, ChevronRight, ArrowLeft, Filter, ArrowUpDown } from 'lucide-react';
 
-interface PanelDirectoryRow {
+interface PanelEvaluationRow {
+  evaluationId: string;
+  jobInterviewId: string;
   panelName: string;
-  totalEvaluations: number;
-  averageScore: number;
-  lastEvaluationDate: string;
+  candidateName: string;
+  panelScore: number;
+  stage: 'L1' | 'L2';
+  evaluatedAt: string;
+  isPipeline?: boolean;
 }
 
 export default function PanelInsightsPage() {
   const navigate = useNavigate();
-  const [directory, setDirectory] = useState<PanelDirectoryRow[]>([]);
+  const [evaluations, setEvaluations] = useState<PanelEvaluationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [stageFilter, setStageFilter] = useState('all');
   const [scoreFilter, setScoreFilter] = useState('all');
+  const [sortBy, setSortBy] = useState<'panelName' | 'score' | 'stage' | 'evaluated_at'>('evaluated_at');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
-    panelApi.getPanelDirectory().then((res) => {
-      if (res.success) {
-        setDirectory(res.data);
-      }
-      setLoading(false);
-    }).catch((err) => {
-      console.error(err);
-      setLoading(false);
-    });
+    fetchEvaluations();
   }, []);
 
-  const filteredData = directory.filter(row => {
-    const matchesSearch = row.panelName.toLowerCase().includes(searchTerm.toLowerCase());
-    if (!matchesSearch) return false;
+  const fetchEvaluations = async () => {
+    try {
+      setLoading(true);
+      const res = await panelApi.getPanelEvaluations();
+      if (res.success) {
+        setEvaluations(res.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch panel evaluations:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    if (scoreFilter === 'good') return row.averageScore >= 8;
-    if (scoreFilter === 'moderate') return row.averageScore >= 5 && row.averageScore < 8;
-    if (scoreFilter === 'poor') return row.averageScore < 5;
-    return true;
-  });
+  // Client-side filtering and sorting
+  const filteredAndSortedData = React.useMemo(() => {
+    let filtered = evaluations.filter(row => {
+      // Search filter
+      const matchesSearch =
+        row.panelName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        row.candidateName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        row.jobInterviewId.toLowerCase().includes(searchTerm.toLowerCase());
+      if (!matchesSearch) return false;
+
+      // Stage filter
+      if (stageFilter !== 'all' && row.stage !== stageFilter) return false;
+
+      // Score filter
+      if (scoreFilter === 'good' && row.panelScore < 8) return false;
+      if (scoreFilter === 'moderate' && (row.panelScore < 5 || row.panelScore >= 8)) return false;
+      if (scoreFilter === 'poor' && row.panelScore >= 5) return false;
+
+      return true;
+    });
+
+    // Sort
+    filtered.sort((a, b) => {
+      let aVal: any = a[sortBy];
+      let bVal: any = b[sortBy];
+
+      if (sortBy === 'stage') {
+        aVal = a.stage === 'L2' ? 1 : 0;
+        bVal = b.stage === 'L2' ? 1 : 0;
+      }
+
+      if (typeof aVal === 'string') {
+        return sortOrder === 'asc'
+          ? aVal.localeCompare(bVal)
+          : bVal.localeCompare(aVal);
+      }
+
+      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+
+    return filtered;
+  }, [evaluations, searchTerm, stageFilter, scoreFilter, sortBy, sortOrder]);
+
+  const handleSort = (field: typeof sortBy) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+  };
+
+  const handleRowClick = (row: PanelEvaluationRow) => {
+    if (row.isPipeline) {
+      // Pipeline evaluations live in pipeline_evaluations, not panel_evaluations
+      navigate(`/dashboard-i/candidate?jobId=${encodeURIComponent(row.jobInterviewId)}&candidateName=${encodeURIComponent(row.candidateName)}`);
+    } else {
+      navigate(`/results/${row.evaluationId}`);
+    }
+  };
 
   return (
     <AppShell>
       <div className="flex-1 overflow-y-auto bg-bg-base p-8">
-        <div className="max-w-6xl mx-auto space-y-6">
+        <div className="max-w-7xl mx-auto space-y-6">
           <button
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate('/dashboard-i')}
             className="flex items-center gap-2 text-sm text-text-muted hover:text-text-primary transition-colors mb-2"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Dashboard
           </button>
-          
+
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-text-primary mb-2">Panel Insights Directory</h1>
-              <p className="text-text-muted">Track and review individual panel member performance across all evaluations.</p>
+              <h1 className="text-2xl font-bold text-text-primary mb-2">Panel Insights</h1>
+              <p className="text-text-muted">View individual panel evaluations across all interviews and stages.</p>
             </div>
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2 px-4 py-2 bg-bg-card rounded-lg border border-white/[0.06]">
-                  <Users className="w-5 h-5 text-indigo-400" />
-                  <span className="text-sm font-medium text-text-primary">{directory.length} Panelists</span>
+                <Users className="w-5 h-5 text-indigo-400" />
+                <span className="text-sm font-medium text-text-primary">{filteredAndSortedData.length} Evaluations</span>
               </div>
             </div>
           </div>
 
           <div className="bg-bg-card rounded-xl border border-white/[0.06] overflow-hidden">
-            <div className="p-4 border-b border-white/[0.06] flex items-center justify-between gap-4">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-                <input
-                  type="text"
-                  placeholder="Search panelists..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full bg-white/[0.02] border border-white/[0.06] rounded-lg pl-9 pr-4 py-2 text-sm text-text-primary focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-colors"
-                />
-              </div>
+            <div className="p-4 border-b border-white/[0.06] space-y-4">
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                  <input
+                    type="text"
+                    placeholder="Search by panel, candidate, or job ID..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full bg-white/[0.02] border border-white/[0.06] rounded-lg pl-9 pr-4 py-2 text-sm text-text-primary focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-colors"
+                  />
+                </div>
 
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-semibold text-text-muted uppercase tracking-wider">Filter by Score:</label>
-                <select
-                  value={scoreFilter}
-                  onChange={(e) => setScoreFilter(e.target.value)}
-                  className="bg-white/[0.02] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-text-primary focus:border-primary/50 transition-colors"
-                >
-                  <option value="all">All Scores</option>
-                  <option value="good" className="bg-slate-900">Good (8.0 - 10.0)</option>
-                  <option value="moderate" className="bg-slate-900">Moderate (5.0 - 7.9)</option>
-                  <option value="poor" className="bg-slate-900">Poor (0.0 - 4.9)</option>
-                </select>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-4 h-4 text-text-muted" />
+                    <label className="text-xs font-semibold text-text-muted uppercase tracking-wider">Stage:</label>
+                    <select
+                      value={stageFilter}
+                      onChange={(e) => setStageFilter(e.target.value)}
+                      className="bg-white/[0.02] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-text-primary focus:border-primary/50 transition-colors"
+                    >
+                      <option value="all">All Stages</option>
+                      <option value="L1" className="bg-slate-900">L1 Only</option>
+                      <option value="L2" className="bg-slate-900">L2 Only</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs font-semibold text-text-muted uppercase tracking-wider">Score:</label>
+                    <select
+                      value={scoreFilter}
+                      onChange={(e) => setScoreFilter(e.target.value)}
+                      className="bg-white/[0.02] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-text-primary focus:border-primary/50 transition-colors"
+                    >
+                      <option value="all">All Scores</option>
+                      <option value="good" className="bg-slate-900">Good (8.0 - 10.0)</option>
+                      <option value="moderate" className="bg-slate-900">Moderate (5.0 - 7.9)</option>
+                      <option value="poor" className="bg-slate-900">Poor (0.0 - 4.9)</option>
+                    </select>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -97,51 +179,101 @@ export default function PanelInsightsPage() {
               <table className="w-full text-sm text-left">
                 <thead className="text-xs text-text-muted uppercase bg-white/[0.02] border-b border-white/[0.06]">
                   <tr>
-                    <th className="px-6 py-4 font-semibold">Panel Member</th>
-                    <th className="px-6 py-4 font-semibold text-center">Interviews Conducted</th>
-                    <th className="px-6 py-4 font-semibold text-center">Average Score</th>
-                    <th className="px-6 py-4 content-end text-right">Actions</th>
+                    <th
+                      className="px-6 py-4 font-semibold cursor-pointer hover:text-text-primary transition-colors"
+                      onClick={() => handleSort('panelName')}
+                    >
+                      <div className="flex items-center gap-2">
+                        Panel Member
+                        {sortBy === 'panelName' && <ArrowUpDown className="w-3 h-3" />}
+                      </div>
+                    </th>
+                    <th className="px-6 py-4 font-semibold">Candidate ID</th>
+                    <th className="px-6 py-4 font-semibold">Candidate Name</th>
+                    <th
+                      className="px-6 py-4 font-semibold text-center cursor-pointer hover:text-text-primary transition-colors"
+                      onClick={() => handleSort('score')}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        Panel Score
+                        {sortBy === 'score' && <ArrowUpDown className="w-3 h-3" />}
+                      </div>
+                    </th>
+                    <th
+                      className="px-6 py-4 font-semibold text-center cursor-pointer hover:text-text-primary transition-colors"
+                      onClick={() => handleSort('stage')}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        Stage
+                        {sortBy === 'stage' && <ArrowUpDown className="w-3 h-3" />}
+                      </div>
+                    </th>
+                    <th className="px-6 py-4 font-semibold text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/[0.06]">
                   {loading ? (
                     <tr>
-                      <td colSpan={4} className="px-6 py-8 text-center text-text-muted">
-                        Loading directory...
+                      <td colSpan={6} className="px-6 py-8 text-center text-text-muted">
+                        Loading evaluations...
                       </td>
                     </tr>
-                  ) : filteredData.length === 0 ? (
+                  ) : filteredAndSortedData.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-6 py-8 text-center text-text-muted">
-                        No panel members found.
+                      <td colSpan={6} className="px-6 py-8 text-center text-text-muted">
+                        No evaluations found.
                       </td>
                     </tr>
                   ) : (
-                    filteredData.map((row) => {
-                      const scoreCategory = row.averageScore >= 8 ? 'text-emerald-400' : row.averageScore >= 5 ? 'text-orange-400' : 'text-red-400';
-                      
+                    filteredAndSortedData.map((row) => {
+                      const scoreCategory = row.panelScore >= 8 ? 'text-emerald-400' : row.panelScore >= 5 ? 'text-orange-400' : 'text-red-400';
+
                       return (
-                        <tr 
-                          key={row.panelName}
-                          onClick={() => navigate(`/panels/${encodeURIComponent(row.panelName)}`)}
+                        <tr
+                          key={row.evaluationId}
+                          onClick={() => handleRowClick(row)}
                           className="hover:bg-white/[0.02] transition-colors cursor-pointer group"
                         >
-                          <td className="px-6 py-4 font-medium text-text-primary flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xs uppercase">
-                              {row.panelName.substring(0, 2)}
+                          <td className="px-6 py-4 font-medium text-text-primary">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold text-xs uppercase">
+                                {row.panelName.substring(0, 2)}
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigate(`/panels/${encodeURIComponent(row.panelName)}`);
+                                }}
+                                className="text-indigo-400 hover:text-indigo-300 hover:underline transition-colors"
+                              >
+                                {row.panelName}
+                              </button>
                             </div>
-                            {row.panelName}
                           </td>
-                          <td className="px-6 py-4 text-center text-text-secondary">
-                            {row.totalEvaluations}
+                          <td className="px-6 py-4 text-text-secondary font-mono text-xs">
+                            {row.jobInterviewId}
+                          </td>
+                          <td className="px-6 py-4 text-text-secondary">
+                            {row.candidateName}
                           </td>
                           <td className="px-6 py-4 text-center">
-                            <span className={`font-semibold ${scoreCategory}`}>{row.averageScore.toFixed(1)}</span>
+                            <span className={`font-semibold ${scoreCategory}`}>{row.panelScore.toFixed(1)}</span>
                             <span className="text-text-muted text-xs ml-1">/ 10</span>
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <span
+                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
+                                row.stage === 'L2'
+                                  ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                                  : 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                              }`}
+                            >
+                              {row.stage}
+                            </span>
                           </td>
                           <td className="px-6 py-4 text-right">
                             <div className="flex items-center justify-end gap-2 text-text-muted text-xs">
-                              <span>View Profile</span>
+                              <span>View Details</span>
                               <ChevronRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
                             </div>
                           </td>
@@ -152,6 +284,14 @@ export default function PanelInsightsPage() {
                 </tbody>
               </table>
             </div>
+
+            {filteredAndSortedData.length > 0 && (
+              <div className="px-6 py-4 border-t border-white/[0.06] bg-white/[0.01]">
+                <p className="text-xs text-text-muted">
+                  Showing {filteredAndSortedData.length} of {evaluations.length} total evaluations
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>

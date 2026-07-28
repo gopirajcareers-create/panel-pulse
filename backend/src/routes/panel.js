@@ -1065,7 +1065,8 @@ router.get('/insights/evaluations', async (req, res) => {
           stage: stageLabel,
           evaluatedAt: latestStage.completedAt
             ? new Date(latestStage.completedAt).toISOString().split('T')[0]
-            : new Date().toISOString().split('T')[0]
+            : new Date().toISOString().split('T')[0],
+          isPipeline: true // Flag so the UI routes to the pipeline results page
         };
       })
       .filter(Boolean); // Remove nulls
