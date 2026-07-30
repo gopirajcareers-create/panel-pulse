@@ -146,7 +146,11 @@ For EACH L2 dimension:
 1. Identify ALL questions asked by the L2 INTERVIEWER/PANEL that relate to this dimension.
 2. Assess how deep, specific, and technically relevant those questions were. L2 interviews are senior-level interviews; questions should focus on depth, system design, scalability, scenarios, and leadership rather than basic coding syntax.
 3. Assign a score from that dimension's allowed score list (see ALLOWED SCORE VALUES below).
-4. Extract 1–3 direct quotes from the L2 INTERVIEWER proving the score.
+4. Quote EVERY distinct interviewer question you counted in step 1 — up to 6 per
+   dimension. The evidence must justify the score on its own: a reader comparing
+   your quotes to the transcript must not find a relevant question you left out.
+   If the panel raised several named technologies or topics, quote the question for
+   EACH one rather than a single representative example.
 
 Score thresholds per dimension:
   - MAX score: Exhaustive probing; every sub-area covered with follow-ups.
@@ -185,14 +189,14 @@ Return ONLY this exact JSON structure:
     "Behavioral Assessment":      <one of 0 / 0.25 / 0.5>
   },
   "evidence": {
-    "Mandatory Skill Coverage":   ["<exact interviewer question>"],
-    "Technical Depth":            ["<exact interviewer question>"],
-    "Resume Screening & Handoff": ["<exact interviewer question>"],
-    "Scenario / Risk Evaluation": ["<exact interviewer question>"],
-    "Framework Knowledge":        ["<exact interviewer question>"],
-    "Hands-on Validation":        ["<exact interviewer question>"],
-    "Leadership Evaluation":      ["<exact interviewer question>"],
-    "Behavioral Assessment":      ["<exact interviewer question>"]
+    "Mandatory Skill Coverage":   ["<every interviewer question about a JD-mandatory technology, one per technology raised>"],
+    "Technical Depth":            ["<every interviewer question probing depth/design/scalability>"],
+    "Resume Screening & Handoff": ["<every interviewer question verifying a resume claim or L1 gap>"],
+    "Scenario / Risk Evaluation": ["<every scenario question>"],
+    "Framework Knowledge":        ["<every framework question>"],
+    "Hands-on Validation":        ["<every hands-on/implementation question>"],
+    "Leadership Evaluation":      ["<every leadership/mentoring question>"],
+    "Behavioral Assessment":      ["<every behavioral question>"]
   },
   "dimension_summaries": {
     "Mandatory Skill Coverage":   "<one sentence verdict>",
@@ -307,6 +311,17 @@ function _clampScores(parsed, hasL1 = true) {
       parsed.evidence[dim] = [];
     }
   }
+
+  // A non-zero score backed by a single quote is unauditable — see l1ScoringService
+  // for the case that motivated this.
+  const thinEvidence = Object.keys(L2_DIMENSIONS)
+    .filter(dim => parsed.categories[dim] > 0 && parsed.evidence[dim].length < 2)
+    .map(dim => `${dim} (${parsed.evidence[dim].length} quote(s), scored ${parsed.categories[dim]})`);
+  if (thinEvidence.length) {
+    console.warn(`[L2Scoring] Thin evidence — score may look unjustified: ${thinEvidence.join('; ')}`);
+  }
+  parsed.scoring_warnings.thin_evidence = thinEvidence;
+
   return parsed;
 }
 
@@ -386,7 +401,8 @@ async function runL2Evaluation(input) {
       { role: 'system', content: L2_SCORING_SYSTEM_PROMPT },
       { role: 'user', content: scoringPrompt }
     ],
-    { temperature: SCORING_TEMPERATURE, maxTokens: 2500, think: false, seed: SCORING_SEED }
+    // 4000, not 2500: 8 dimensions × up to 6 quotes each. See l1ScoringService.
+    { temperature: SCORING_TEMPERATURE, maxTokens: 4000, think: false, seed: SCORING_SEED }
   );
 
   const parsedScore = _parseJSON(llmResult.content);

@@ -110,7 +110,11 @@ For EACH dimension:
 1. Identify ALL questions asked by the INTERVIEWER that relate to this dimension.
 2. Assess how deep, specific, and technically relevant those questions were.
 3. Assign a score between 0 and the dimension maximum.
-4. Extract 1–3 direct quotes from the INTERVIEWER proving the score.
+4. Quote EVERY distinct interviewer question you counted in step 1 — up to 6 per
+   dimension. The evidence must justify the score on its own: a reader comparing
+   your quotes to the transcript must not find a relevant question you left out.
+   If the panel raised several named technologies or topics, quote the question for
+   EACH one rather than a single representative example.
 
 Score thresholds per dimension:
   - MAX score: Exhaustive probing; every sub-area covered with follow-ups.
@@ -146,12 +150,12 @@ Return ONLY this exact JSON structure:
     "Hands-on Validation":        <one of 0 / 0.25 / 0.5 / 0.75 / 1>
   },
   "evidence": {
-    "Mandatory Skill Coverage":   ["<exact interviewer question>"],
-    "Technical Depth":            ["<exact interviewer follow-up>"],
-    "Resume Initial Screening":   ["<exact interviewer question verifying resume claim>"],
-    "Scenario / Risk Evaluation": ["<exact scenario question>"],
-    "Framework Knowledge":        ["<exact framework question>"],
-    "Hands-on Validation":        ["<exact coding/tools question>"]
+    "Mandatory Skill Coverage":   ["<every interviewer question about a JD-mandatory technology, one per technology raised>"],
+    "Technical Depth":            ["<every interviewer follow-up probing how/why>"],
+    "Resume Initial Screening":   ["<every interviewer question verifying a resume claim>"],
+    "Scenario / Risk Evaluation": ["<every scenario question>"],
+    "Framework Knowledge":        ["<every framework question>"],
+    "Hands-on Validation":        ["<every coding/tools question>"]
   },
   "dimension_summaries": {
     "Mandatory Skill Coverage":   "<one sentence verdict>",
@@ -240,6 +244,19 @@ function _clampScores(parsed) {
       parsed.evidence[dim] = [];
     }
   }
+
+  // A non-zero score with a single quote (or none) is unauditable: the reader cannot
+  // tell whether the panel asked one thing or six. Surfacing it beats a silent gap —
+  // this is how a score that looked unjustified ("panel never asked about X") turned
+  // out to be a reporting problem rather than a scoring one.
+  const thinEvidence = Object.keys(L1_DIMENSIONS)
+    .filter(dim => parsed.categories[dim] > 0 && parsed.evidence[dim].length < 2)
+    .map(dim => `${dim} (${parsed.evidence[dim].length} quote(s), scored ${parsed.categories[dim]})`);
+  if (thinEvidence.length) {
+    console.warn(`[L1Scoring] Thin evidence — score may look unjustified: ${thinEvidence.join('; ')}`);
+  }
+  parsed.scoring_warnings.thin_evidence = thinEvidence;
+
   return parsed;
 }
 
@@ -321,7 +338,10 @@ async function runL1Evaluation(input) {
       { role: 'system', content: L1_SCORING_SYSTEM_PROMPT },
       { role: 'user', content: scoringPrompt }
     ],
-    { temperature: SCORING_TEMPERATURE, maxTokens: 2000, think: false, seed: SCORING_SEED }
+    // 3000, not 2000: quoting every relevant question (up to 6 per dimension across
+    // 6 dimensions) roughly triples the evidence payload. Too low and Ollama stops
+    // mid-JSON with done_reason=length and the response fails to parse.
+    { temperature: SCORING_TEMPERATURE, maxTokens: 3000, think: false, seed: SCORING_SEED }
   );
 
   const parsedScore = _parseJSON(llmResult.content);
