@@ -1,138 +1,407 @@
 /**
- * Shared LLM client — priority: Ollama → GROQ → Mistral (with automatic fallback)
+ * Shared LLM client — Ollama (local / on-prem) ONLY.
  *
- * All services should use callLLM() from this module instead of
- * building their own HTTP calls. Provider selection is automatic:
- *   1. OLLAMA_BASE_URL is set  → local Ollama (data stays on-prem)
- *   2. GROQ_API_KEY is set     → GROQ cloud
- *   3. MISTRAL_API_KEY is set  → Mistral cloud
+ * There is deliberately NO cloud fallback to GROQ or Mistral. Two reasons:
+ *   1. Data must stay on-prem.
+ *   2. Scoring must be reproducible. Silently switching to a different model
+ *      mid-run produced different score distributions for identical input,
+ *      which is indistinguishable from a scoring bug when reading results.
  *
- * Automatic fallback: If Ollama fails (connection error), automatically
- * falls back to GROQ → Mistral without throwing an error.
+ * A failed Ollama call is therefore a HARD ERROR, never a quiet downgrade.
+ *
+ * Determinism: pass `seed` (and temperature 0) for reproducible scoring.
+ * Context safety: num_ctx is always set explicitly. Ollama silently drops the
+ * FRONT of an over-long prompt (JD / resume / transcript context) rather than
+ * erroring, so we pre-flight the token estimate and refuse instead.
+ *
+ * Availability: the on-prem host reboots / goes offline periodically. Transient
+ * faults (connection reset, 5xx, 429, model still loading) are retried with
+ * exponential backoff inside a total time budget. Deterministic faults (prompt
+ * too large, model not found, truncation) are NOT retried — retrying them just
+ * burns the budget and delays the error the caller needs to see.
+ *
+ * Retrying is safe for scoring precisely because seed + temperature 0 make the
+ * call idempotent: attempt 2 returns what attempt 1 would have.
  */
 const axios = require('axios');
+const http  = require('http');
+const https = require('https');
 
 const OLLAMA_BASE  = (process.env.OLLAMA_BASE_URL  || '').replace(/\/$/, '');
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL_NAME || 'qwen3:latest';
+const NUM_CTX      = parseInt(process.env.OLLAMA_NUM_CTX || '16384', 10);
+const TIMEOUT_MS   = parseInt(process.env.OLLAMA_TIMEOUT_MS || '180000', 10);
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL   = process.env.GROQ_MODEL_NAME   || 'llama-3.3-70b-versatile';
+// ── Retry policy ──
+const MAX_ATTEMPTS    = parseInt(process.env.OLLAMA_MAX_ATTEMPTS || '3', 10);
+const RETRY_BASE_MS   = parseInt(process.env.OLLAMA_RETRY_BASE_MS || '2000', 10);
+// Ceiling on ALL attempts combined. Must stay under the frontend's polling
+// window (150 polls x 4s = 600s) or the browser gives up before we do.
+const RETRY_BUDGET_MS = parseInt(process.env.OLLAMA_RETRY_BUDGET_MS || '480000', 10);
 
-const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY;
-const MISTRAL_MODEL   = process.env.MISTRAL_MODEL_NAME || 'mistral-large-latest';
+// ── Health probe ──
+const HEALTH_TIMEOUT_MS = parseInt(process.env.OLLAMA_HEALTH_TIMEOUT_MS || '4000', 10);
+// Cache a health verdict briefly so a burst of submissions doesn't re-probe per request.
+const HEALTH_TTL_MS = parseInt(process.env.OLLAMA_HEALTH_TTL_MS || '15000', 10);
 
-function _getProvider() {
-  if (OLLAMA_BASE)    return 'ollama';
-  if (GROQ_API_KEY)   return 'groq';
-  if (MISTRAL_API_KEY) return 'mistral';
-  return null;
+// Conservative estimate for mixed English prose + JSON scaffolding.
+const CHARS_PER_TOKEN = 3.2;
+
+const CONN_ERRORS = ['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'ECONNABORTED', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN'];
+
+if (!OLLAMA_BASE) {
+  console.warn('⚠️  No LLM provider configured: set OLLAMA_BASE_URL (Ollama is the only supported provider)');
+} else {
+  console.log(`🤖 LLM provider: Ollama (${OLLAMA_BASE}) model=${OLLAMA_MODEL} num_ctx=${NUM_CTX}`);
+  console.log('   ↳ No cloud fallback — failures are surfaced, not silently rerouted.');
 }
 
-const PROVIDER = _getProvider();
+function _getProvider() {
+  return OLLAMA_BASE ? 'ollama' : null;
+}
 
-if (!PROVIDER) {
-  console.warn('⚠️  No LLM provider configured: set OLLAMA_BASE_URL, GROQ_API_KEY, or MISTRAL_API_KEY');
-} else {
-  const fallbacks = [];
-  if (PROVIDER === 'ollama') {
-    console.log(`🤖 Primary LLM provider: Ollama (${OLLAMA_BASE}) model=${OLLAMA_MODEL}`);
-    if (GROQ_API_KEY) fallbacks.push('GROQ');
-    if (MISTRAL_API_KEY) fallbacks.push('Mistral');
-  } else if (PROVIDER === 'groq') {
-    console.log(`🤖 Primary LLM provider: GROQ model=${GROQ_MODEL}`);
-    if (MISTRAL_API_KEY) fallbacks.push('Mistral');
-  } else if (PROVIDER === 'mistral') {
-    console.log(`🤖 Primary LLM provider: Mistral model=${MISTRAL_MODEL}`);
-  }
+function _estimateTokens(messages) {
+  const chars = messages.reduce((sum, m) => sum + String(m?.content || '').length, 0);
+  return Math.ceil(chars / CHARS_PER_TOKEN);
+}
 
-  if (fallbacks.length > 0) {
-    console.log(`   ↳ Automatic fallback available: ${fallbacks.join(' → ')}`);
-  }
+const _sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * Shorten a model digest for storage/logs, git-style.
+ * Ollama reports it as either 'sha256:ab12...' or bare hex depending on version, so
+ * strip any algorithm prefix first — otherwise 7 of the kept characters are constant.
+ */
+function _shortDigest(raw) {
+  if (!raw) return null;
+  const hex = String(raw).replace(/^[a-z0-9]+:/i, '');
+  return hex.slice(0, 12) || null;
 }
 
 /**
- * Call the configured LLM provider with automatic fallback.
+ * Minimal JSON request against Ollama's control endpoints (/api/tags, /api/show).
+ * Deliberately not axios: these are health/metadata probes that must fail fast and
+ * never inherit the long inference timeout.
+ */
+function _controlRequest(pathname, { method = 'GET', body = null, timeout = HEALTH_TIMEOUT_MS } = {}) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(OLLAMA_BASE + pathname);
+    const lib = url.protocol === 'https:' ? https : http;
+    const payload = body ? JSON.stringify(body) : null;
+    const req = lib.request({
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname,
+      method,
+      timeout,
+      headers: payload
+        ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+        : {},
+    }, (r) => {
+      let buf = '';
+      r.on('data', c => { buf += c; });
+      r.on('end', () => {
+        if (r.statusCode !== 200) return reject(new Error(`HTTP ${r.statusCode}`));
+        try { resolve(JSON.parse(buf)); }
+        catch (e) { reject(new Error(`unparseable response from ${pathname}`)); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error(`no response within ${timeout}ms`)); });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+/**
+ * Classify a failed request. Only transient faults are worth retrying.
+ * @returns {{transient: boolean, reason: string}}
+ */
+function _classifyError(error) {
+  if (CONN_ERRORS.includes(error.code)) {
+    return { transient: true, reason: `connection ${error.code}` };
+  }
+  const status = error.response?.status;
+  const body = typeof error.response?.data === 'string'
+    ? error.response.data
+    : JSON.stringify(error.response?.data || '');
+
+  // 404 = model not installed on this host. A retry cannot fix that.
+  if (status === 404) return { transient: false, reason: 'model not found' };
+  // Ollama returns 500 with "loading model" while a cold model is paged in.
+  if (/loading model|model is being loaded|server busy/i.test(body)) {
+    return { transient: true, reason: 'model loading' };
+  }
+  if (status === 429) return { transient: true, reason: 'rate limited' };
+  if (status >= 500) return { transient: true, reason: `upstream ${status}` };
+  if (status >= 400) return { transient: false, reason: `request rejected (${status})` };
+  return { transient: true, reason: error.code || 'unknown' };
+}
+
+/**
+ * Resolve the mutable model TAG to the immutable weights actually loaded.
+ *
+ * `qwen3:latest` is a moving target: anyone re-pulling on a shared host swaps the
+ * weights underneath us and scores shift with nothing in the logs to explain it.
+ * Recording the digest makes a score traceable to specific weights, so two records
+ * can be compared honestly (or flagged as incomparable) even across a re-pull.
+ *
+ * Best-effort by design: a failure here must never block scoring, so we return
+ * nulls and let the score be written with unknown provenance rather than fail.
+ *
+ * Cached process-wide — the digest only changes on a re-pull, which means a
+ * restart-worthy event anyway.
+ *
+ * @returns {Promise<{digest:string|null, parameterSize:string|null,
+ *                    quantization:string|null, family:string|null, contextLength:number|null}>}
+ */
+let _modelIdCache = null;
+async function resolveModelIdentity({ force = false } = {}) {
+  if (!force && _modelIdCache) return _modelIdCache;
+  if (!OLLAMA_BASE) return { digest: null, parameterSize: null, quantization: null, family: null, contextLength: null };
+
+  let identity = { digest: null, parameterSize: null, quantization: null, family: null, contextLength: null };
+  try {
+    // /api/show carries the richer detail (quantization, param count, ctx length)...
+    const show = await _controlRequest('/api/show', { method: 'POST', body: { model: OLLAMA_MODEL } });
+    const details = show.details || {};
+    identity.parameterSize = details.parameter_size || null;
+    identity.quantization  = details.quantization_level || null;
+    identity.family        = details.family || null;
+
+    const info = show.model_info || {};
+    const ctxKey = Object.keys(info).find(k => k.endsWith('.context_length'));
+    if (ctxKey) identity.contextLength = info[ctxKey];
+
+    // ...but only /api/tags exposes the digest, so cross-reference by name.
+    try {
+      const tags = await _controlRequest('/api/tags');
+      const base = OLLAMA_MODEL.split(':')[0];
+      const entry = (tags.models || []).find(m => (m.name || m.model) === OLLAMA_MODEL)
+        || (tags.models || []).find(m => String(m.name || m.model).split(':')[0] === base);
+      identity.digest = _shortDigest(entry?.digest);
+    } catch (_) { /* digest is a nice-to-have; keep the /api/show detail */ }
+
+    // Only cache a COMPLETE identity. Caching a digest-less partial (e.g. /api/tags
+    // blipped) would poison provenance for the whole process lifetime.
+    if (identity.digest) _modelIdCache = identity;
+
+    console.log(`🔒 Model identity: ${OLLAMA_MODEL} digest=${identity.digest || 'unknown'} ` +
+      `params=${identity.parameterSize || '?'} quant=${identity.quantization || '?'} ctx=${identity.contextLength || '?'}`);
+    if (OLLAMA_MODEL.endsWith(':latest')) {
+      console.warn(`⚠️  OLLAMA_MODEL_NAME='${OLLAMA_MODEL}' uses the mutable ':latest' tag — a re-pull ` +
+        `silently changes scoring. Pin an explicit tag (e.g. qwen3:8b-q4_K_M) for reproducible scores.`);
+    }
+  } catch (err) {
+    // Do not cache a failure: the host may simply have been mid-restart.
+    console.warn(`⚠️  Could not resolve model identity for '${OLLAMA_MODEL}': ${err.message}. ` +
+      `Scores will record digest=null (provenance unknown).`);
+  }
+  return identity;
+}
+
+/**
+ * Is Ollama up and is the configured model actually installed?
+ *
+ * Cheap (hits /api/tags, no inference) and cached for HEALTH_TTL_MS. Use this to
+ * reject a scoring request up front instead of failing minutes into an async job.
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.force] — bypass the cache
+ * @returns {Promise<{ok:boolean, reachable:boolean, modelFound:boolean|null,
+ *                    models:string[], base:string, model:string, error:string|null, cached:boolean}>}
+ */
+let _healthCache = null;   // { at: number, result: object }
+async function checkOllamaHealth({ force = false } = {}) {
+  if (!OLLAMA_BASE) {
+    return {
+      ok: false, reachable: false, modelFound: null, models: [], digest: null,
+      base: '', model: OLLAMA_MODEL, cached: false,
+      error: 'OLLAMA_BASE_URL is not set. Ollama is the only supported provider; there is no cloud fallback.',
+    };
+  }
+
+  if (!force && _healthCache && (Date.now() - _healthCache.at) < HEALTH_TTL_MS) {
+    return { ..._healthCache.result, cached: true };
+  }
+
+  let result;
+  try {
+    const tags = await _controlRequest('/api/tags');
+    const entries = tags.models || [];
+    const models = entries.map(m => m.name || m.model).filter(Boolean);
+    // Tolerate tag drift: qwen3:latest and qwen3:8b-q4_K_M share the base name.
+    const base = OLLAMA_MODEL.split(':')[0];
+    const match = entries.find(m => (m.name || m.model) === OLLAMA_MODEL)
+      || entries.find(m => String(m.name || m.model).split(':')[0] === base);
+    const modelFound = Boolean(match);
+
+    result = {
+      ok: modelFound, reachable: true, modelFound, models,
+      digest: _shortDigest(match?.digest),
+      base: OLLAMA_BASE, model: OLLAMA_MODEL, cached: false,
+      error: modelFound ? null : `Model '${OLLAMA_MODEL}' is not installed on ${OLLAMA_BASE}. Available: ${models.join(', ') || '(none)'}`,
+    };
+  } catch (err) {
+    result = {
+      ok: false, reachable: false, modelFound: null, models: [], digest: null,
+      base: OLLAMA_BASE, model: OLLAMA_MODEL, cached: false,
+      error: `Ollama unreachable at ${OLLAMA_BASE} (${err.message}).`,
+    };
+  }
+
+  _healthCache = { at: Date.now(), result };
+  return result;
+}
+
+/**
+ * Call Ollama and return the response text plus run metadata.
  *
  * @param {Array<{role:string, content:string}>} messages
  * @param {object} [opts]
  * @param {number} [opts.temperature=0.2]
  * @param {number} [opts.maxTokens=2000]
  * @param {boolean} [opts.think=true]
- * @returns {Promise<string>} Cleaned response text (<think> blocks stripped)
+ * @param {number} [opts.seed]      — set for reproducible output
+ * @param {number} [opts.numCtx]    — override context window
+ * @returns {Promise<{content:string, provider:string, model:string, modelDigest:string|null,
+ *                    modelParameterSize:string|null, modelQuantization:string|null,
+ *                    modelContextLength:number|null, seed:number|undefined, numCtx:number,
+ *                    promptTokens:number, outputTokens:number, doneReason:string, attempts:number}>}
  */
-async function callLLM(messages, { temperature = 0.2, maxTokens = 2000, think = true } = {}) {
-  const provider = _getProvider();
-
-  if (!provider) {
-    throw new Error('No LLM provider configured. Set OLLAMA_BASE_URL, GROQ_API_KEY, or MISTRAL_API_KEY.');
+async function callLLMWithMeta(messages, {
+  temperature = 0.2, maxTokens = 2000, think = true, seed, numCtx = NUM_CTX,
+} = {}) {
+  if (!OLLAMA_BASE) {
+    throw new Error('No LLM provider configured. Set OLLAMA_BASE_URL to your on-prem Ollama endpoint.');
   }
 
-  // Try Ollama first, then fallback to GROQ/Mistral if it fails
-  const providers = [];
-  if (OLLAMA_BASE) providers.push('ollama');
-  if (GROQ_API_KEY) providers.push('groq');
-  if (MISTRAL_API_KEY) providers.push('mistral');
+  // ── Pre-flight: refuse rather than let Ollama silently truncate the prompt ──
+  const estimated = _estimateTokens(messages);
+  const budget = numCtx - maxTokens;
+  if (estimated > budget) {
+    throw new Error(
+      `Prompt too large for context window: ~${estimated} estimated tokens but only ${budget} available ` +
+      `(num_ctx=${numCtx} minus num_predict=${maxTokens}). Ollama would silently discard the START of the ` +
+      `prompt (JD / resume / transcript context) and score against partial input. ` +
+      `Shorten the input or raise OLLAMA_NUM_CTX.`
+    );
+  }
 
-  let lastError = null;
+  const options = { temperature, num_predict: maxTokens, num_ctx: numCtx };
+  if (seed !== undefined) options.seed = seed;
 
-  for (const currentProvider of providers) {
+  // Resolve which weights we're about to use, concurrently with the call itself so
+  // it costs no extra wall-clock. Cached after the first call, and never fatal.
+  const identityPromise = resolveModelIdentity().catch(() => ({
+    digest: null, parameterSize: null, quantization: null, family: null, contextLength: null,
+  }));
+
+  // ── Bounded retry: the on-prem host restarts, and a cold model can 500 while
+  //    it pages in. Safe to retry because seed + temperature 0 make this call
+  //    idempotent — attempt 2 returns what attempt 1 would have.
+  const startedAt = Date.now();
+  let response, lastError, attempt = 0;
+
+  while (attempt < MAX_ATTEMPTS) {
+    attempt++;
     try {
-      let apiUrl, model, headers, body, timeout;
-
-      if (currentProvider === 'ollama') {
-        apiUrl  = `${OLLAMA_BASE}/api/chat`;
-        model   = OLLAMA_MODEL;
-        headers = { 'Content-Type': 'application/json' };
-        body    = { model, messages, stream: false, options: { temperature, num_predict: maxTokens }, think };
-        timeout = 120000;
-      } else if (currentProvider === 'groq') {
-        apiUrl  = 'https://api.groq.com/openai/v1/chat/completions';
-        model   = GROQ_MODEL;
-        headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_API_KEY}` };
-        body    = { model, messages, temperature, max_tokens: maxTokens, top_p: 1, stream: false };
-        timeout = 90000;
-      } else { // mistral
-        apiUrl  = 'https://api.mistral.ai/v1/chat/completions';
-        model   = MISTRAL_MODEL;
-        headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${MISTRAL_API_KEY}` };
-        body    = { model, messages, temperature, max_tokens: maxTokens, stream: false };
-        timeout = 90000;
-      }
-
-      const response = await axios.post(apiUrl, body, { headers, timeout });
-
-      const rawContent = currentProvider === 'ollama'
-        ? (response.data?.message?.content || response.data?.message?.thinking || '')
-        : response.data?.choices?.[0]?.message?.content;
-
-      const content = (rawContent || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-      if (!content) throw new Error(`Invalid response format from ${currentProvider} API`);
-
-      // If we're using a fallback provider, log it
-      if (currentProvider !== provider) {
-        console.warn(`⚠️  Primary provider (${provider}) failed, using fallback: ${currentProvider}`);
-      }
-
-      return content;
-
+      response = await axios.post(
+        `${OLLAMA_BASE}/api/chat`,
+        { model: OLLAMA_MODEL, messages, stream: false, options, think },
+        { headers: { 'Content-Type': 'application/json' }, timeout: TIMEOUT_MS }
+      );
+      if (attempt > 1) console.log(`✅ Ollama recovered on attempt ${attempt}/${MAX_ATTEMPTS}.`);
+      break;
     } catch (error) {
       lastError = error;
-      const isConnectionError = error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND';
+      const { transient, reason } = _classifyError(error);
+      const elapsed = Date.now() - startedAt;
 
-      // Log the failure and try next provider
-      if (isConnectionError) {
-        console.warn(`⚠️  ${currentProvider} connection failed (${error.code}), trying next provider...`);
-      } else {
-        console.error(`❌ ${currentProvider} request failed:`, error.message);
+      if (!transient) {
+        const detail = error.response?.data ? JSON.stringify(error.response.data) : error.message;
+        throw new Error(`Ollama request failed — ${reason} (model=${OLLAMA_MODEL}): ${detail}`);
       }
+      if (attempt >= MAX_ATTEMPTS) break;
 
-      // Continue to next provider
-      continue;
+      // Exponential backoff: 2s, 4s, 8s...
+      const backoff = RETRY_BASE_MS * Math.pow(2, attempt - 1);
+      if (elapsed + backoff + TIMEOUT_MS > RETRY_BUDGET_MS) {
+        console.warn(`⚠️  Ollama ${reason}; retry budget exhausted after ${Math.round(elapsed / 1000)}s — giving up.`);
+        break;
+      }
+      console.warn(`⚠️  Ollama ${reason} (attempt ${attempt}/${MAX_ATTEMPTS}) — retrying in ${backoff / 1000}s...`);
+      await _sleep(backoff);
     }
   }
 
-  // All providers failed
-  throw new Error(`All LLM providers failed. Last error: ${lastError?.message || 'Unknown error'}`);
+  if (!response) {
+    const { reason } = _classifyError(lastError);
+    const secs = Math.round((Date.now() - startedAt) / 1000);
+    // A real outage — invalidate the cached health verdict so the next request re-probes.
+    _healthCache = null;
+    throw new Error(
+      `Ollama unavailable at ${OLLAMA_BASE} after ${attempt} attempt(s) over ${secs}s — ${reason}. ` +
+      `No cloud fallback is configured by design; the on-prem model is the only scoring engine.`
+    );
+  }
+
+  const data = response.data || {};
+  const rawContent = data.message?.content || data.message?.thinking || '';
+  const content = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+  if (!content) {
+    throw new Error(`Ollama returned an empty response (model=${OLLAMA_MODEL}, done_reason=${data.done_reason}).`);
+  }
+
+  // ── Post-flight: detect the truncation our estimate may have missed ──
+  const promptTokens = data.prompt_eval_count;
+  if (promptTokens != null && promptTokens >= numCtx) {
+    throw new Error(
+      `Prompt was truncated by Ollama: prompt_eval_count=${promptTokens} hit num_ctx=${numCtx}. ` +
+      `The start of the prompt was discarded, so this result is not trustworthy. Raise OLLAMA_NUM_CTX or shorten the input.`
+    );
+  }
+  if (data.done_reason && data.done_reason !== 'stop') {
+    console.warn(`⚠️  Ollama stopped early: done_reason=${data.done_reason} (output may be incomplete/unparseable). ` +
+      `Consider raising maxTokens (current num_predict=${maxTokens}).`);
+  }
+
+  const identity = await identityPromise;
+
+  return {
+    content,
+    provider: 'ollama',
+    model: OLLAMA_MODEL,
+    modelDigest: identity.digest,
+    modelParameterSize: identity.parameterSize,
+    modelQuantization: identity.quantization,
+    modelContextLength: identity.contextLength,
+    seed,
+    numCtx,
+    promptTokens,
+    outputTokens: data.eval_count,
+    doneReason: data.done_reason,
+    attempts: attempt,
+  };
 }
 
-module.exports = { callLLM, getProvider: _getProvider, PROVIDER };
+/**
+ * Call Ollama and return just the cleaned response text.
+ * @returns {Promise<string>}
+ */
+async function callLLM(messages, opts) {
+  return (await callLLMWithMeta(messages, opts)).content;
+}
+
+module.exports = {
+  callLLM,
+  callLLMWithMeta,
+  checkOllamaHealth,
+  resolveModelIdentity,
+  getProvider: _getProvider,
+  PROVIDER: _getProvider(),
+  OLLAMA_MODEL,
+  NUM_CTX,
+  MAX_ATTEMPTS,
+};

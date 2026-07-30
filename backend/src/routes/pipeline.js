@@ -5,7 +5,7 @@ const { performPanelEvaluation } = require('../services/panelEvaluationService')
 const { runL1Evaluation } = require('../services/l1ScoringService');   // NEW Stage-2 service
 const { runL2Evaluation } = require('../services/l2ScoringService');   // NEW Stage-3 service
 const { analyzeJD } = require('../services/jdAnalyzerService');
-const { callLLM } = require('../services/llmClient');
+const { callLLM, checkOllamaHealth } = require('../services/llmClient');
 const { randomUUID } = require('crypto');
 
 // In-memory job store for async pipeline evaluation jobs (cleaned up after 30 min)
@@ -16,6 +16,33 @@ setInterval(() => {
     if (job.createdAt < cutoff) jobStore.delete(id);
   }
 }, 5 * 60 * 1000);
+
+/**
+ * Reject a scoring request up front when the on-prem model is unavailable.
+ *
+ * Without this, the route returns 202 and the frontend polls for minutes before
+ * surfacing a failure — the user only learns the engine was down after the wait.
+ * The probe is cheap (/api/tags, no inference) and cached, so it costs ~nothing
+ * on the happy path.
+ *
+ * @returns {Promise<boolean>} true if the caller should continue
+ */
+async function ensureScoringEngineAvailable(res, stage) {
+  const health = await checkOllamaHealth();
+  if (health.ok) return true;
+
+  console.error(`[${stage}] Refused — scoring engine unavailable: ${health.error}`);
+  res.status(503).json({
+    success: false,
+    error: health.reachable
+      ? `Scoring model not available: ${health.error}`
+      : 'The on-prem scoring engine (Ollama) is currently unreachable. Scoring has not started — please retry in a few minutes.',
+    code: health.reachable ? 'MODEL_NOT_FOUND' : 'SCORING_ENGINE_UNAVAILABLE',
+    retryable: true,
+    details: { provider: 'ollama', base: health.base, model: health.model, reachable: health.reachable },
+  });
+  return false;
+}
 
 /**
  * Helper to parse JSON safely from LLM response
@@ -259,6 +286,9 @@ router.post('/stage2', async (req, res) => {
 
     console.log(`[Stage2] jobId=${jobId} candidate="${candidateName}" transcriptLen=${l1Transcript.length}`);
 
+    // Fail fast while the caller is still on the request, not 4 minutes into polling.
+    if (!(await ensureScoringEngineAvailable(res, 'Stage2'))) return;
+
     const db = await getDb();
     const pipelineCol = db.collection('pipeline_evaluations');
     const existing = await pipelineCol.findOne({ jobId, candidateName });
@@ -345,6 +375,9 @@ router.post('/stage3', async (req, res) => {
       });
     }
 
+    // Fail fast while the caller is still on the request, not 4 minutes into polling.
+    if (!(await ensureScoringEngineAvailable(res, 'Stage3'))) return;
+
     const db = await getDb();
     const pipelineCol = db.collection('pipeline_evaluations');
     const existing = await pipelineCol.findOne({ jobId, candidateName });
@@ -352,6 +385,16 @@ router.post('/stage3', async (req, res) => {
     const jdText = existing?.stage1?.jdText || 'General Software Engineering Job Description';
     const resumeText = existing?.stage1?.resumeText || '';
     const l1Transcript = existing?.stage2?.l1Transcript || '';
+
+    // The L1 transcript materially changes how "Resume Screening & Handoff" is
+    // scored (its absence inflated L2 totals by ~1.2 pts and could flip the
+    // verdict Moderate -> Good). Scoring still proceeds, but the caller is told,
+    // so an L2 score is never silently compared against one from the other regime.
+    const l1ContextAvailable = Boolean(l1Transcript && l1Transcript.trim());
+    if (!l1ContextAvailable) {
+      console.warn(`[Stage3] No Stage 2 (L1) transcript for jobId=${jobId} candidate="${candidateName}" — ` +
+        `L2 handoff scoring will be limited. Run Stage 2 first for a fully comparable score.`);
+    }
 
     const asyncJobId = randomUUID();
     jobStore.set(asyncJobId, { status: 'processing', createdAt: Date.now() });
@@ -387,6 +430,7 @@ router.post('/stage3', async (req, res) => {
                 completedAt: new Date().toISOString(),
                 l2Transcript,
                 candidateStatus,
+                l1ContextAvailable,
                 evaluation: result.evaluation,
                 moderation: result.moderation
               },
@@ -402,7 +446,8 @@ router.post('/stage3', async (req, res) => {
           createdAt: Date.now(),
           data: {
             success: true,
-            evaluation: result.evaluation
+            evaluation: result.evaluation,
+            l1ContextAvailable
           }
         });
       })

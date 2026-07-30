@@ -18,18 +18,26 @@
 
 'use strict';
 
-const { callLLM } = require('./llmClient');
+const { callLLMWithMeta, callLLM } = require('./llmClient');
 const { analyzeInterviewModeration } = require('./moderationService');
+
+// ─── Determinism ─────────────────────────────────────────────────────────────
+// Same rationale as L2: identical input must produce an identical score.
+const SCORING_SEED = parseInt(process.env.L1_SCORING_SEED || '42', 10);
+const SCORING_TEMPERATURE = 0;
 
 // ─── Dimension Config ────────────────────────────────────────────────────────
 
+// `steps` = the only scores allowed per dimension (see l2ScoringService for the
+// full rationale). L1 already tended to land on this grid; making it explicit
+// keeps L1 and L2 on the same footing and prevents interpolated values.
 const L1_DIMENSIONS = {
-  'Mandatory Skill Coverage':   { max: 2.0, focus: 'Probing mandatory technologies explicitly listed in the JD.' },
-  'Technical Depth':            { max: 2.0, focus: 'Quality of follow-up questions ("how" and "why").' },
-  'Resume Initial Screening':   { max: 2.0, focus: 'Did L1 verify the specific experience and project claims written in the resume?' },
-  'Scenario / Risk Evaluation': { max: 2.0, focus: 'Presenting real-world coding / problem-solving scenarios.' },
-  'Framework Knowledge':        { max: 1.0, focus: 'Probing specific frameworks mentioned in the JD.' },
-  'Hands-on Validation':        { max: 1.0, focus: 'Probing actual coding, tools, and scripting practices.' },
+  'Mandatory Skill Coverage':   { max: 2.0, steps: [0, 0.5, 1.0, 1.5, 2.0], focus: 'Probing mandatory technologies explicitly listed in the JD.' },
+  'Technical Depth':            { max: 2.0, steps: [0, 0.5, 1.0, 1.5, 2.0], focus: 'Quality of follow-up questions ("how" and "why").' },
+  'Resume Initial Screening':   { max: 2.0, steps: [0, 0.5, 1.0, 1.5, 2.0], focus: 'Did L1 verify the specific experience and project claims written in the resume?' },
+  'Scenario / Risk Evaluation': { max: 2.0, steps: [0, 0.5, 1.0, 1.5, 2.0], focus: 'Presenting real-world coding / problem-solving scenarios.' },
+  'Framework Knowledge':        { max: 1.0, steps: [0, 0.25, 0.5, 0.75, 1.0], focus: 'Probing specific frameworks mentioned in the JD.' },
+  'Hands-on Validation':        { max: 1.0, steps: [0, 0.25, 0.5, 0.75, 1.0], focus: 'Probing actual coding, tools, and scripting practices.' },
 };
 
 const MAX_L1_SCORE = Object.values(L1_DIMENSIONS).reduce((s, d) => s + d.max, 0); // 10.0
@@ -46,7 +54,12 @@ CRITICAL RULES:
 3. Evidence MUST only quote lines spoken by the INTERVIEWER / PANEL — never the candidate.
 4. Score MAXIMUM points when the panelist genuinely did an excellent job on that dimension.
 5. Score 0 when the dimension was entirely absent from the interview.
-6. Do NOT artificially deflate scores — if the panelist did a thorough job, award full marks.`;
+6. Do NOT artificially deflate scores — if the panelist did a thorough job, award full marks.
+7. You are scoring the QUALITY OF THE PANEL'S QUESTIONS, never the quality of the
+   candidate's answers. A panel that asked excellent questions scores full marks even
+   if the candidate answered everything badly, and vice versa.
+8. Award each dimension ONLY a value from that dimension's allowed score list. Never
+   interpolate between the allowed values.`;
 
 // ─── Core Scoring Function ───────────────────────────────────────────────────
 
@@ -64,7 +77,11 @@ function _buildScoringPrompt(jobId, jd, resumeText, transcript) {
     : transcript;
 
   const dimensionTable = Object.entries(L1_DIMENSIONS)
-    .map(([name, cfg]) => `  • ${name} (max ${cfg.max}): ${cfg.focus}`)
+    .map(([name, cfg]) => `  • ${name} (max ${cfg.max}, allowed scores: ${cfg.steps.join(' / ')}): ${cfg.focus}`)
+    .join('\n');
+
+  const gridTable = Object.entries(L1_DIMENSIONS)
+    .map(([name, cfg]) => `  • ${name}: choose exactly one of ${cfg.steps.join(' / ')}`)
     .join('\n');
 
   return `/no_think
@@ -102,6 +119,13 @@ Score thresholds per dimension:
   - 25% max: Very brief or incidental mention only.
   - 0:        Dimension entirely absent from the interview.
 
+=== ALLOWED SCORE VALUES (MANDATORY) ===
+Each dimension accepts ONLY these exact values. Any other number is invalid:
+${gridTable}
+Pick the single closest allowed value. Do NOT output values in between (no 0.2, 0.3, 0.6, 1.2, 1.8).
+
+SCORE THE QUESTIONS, NOT THE ANSWERS: a weak candidate does not make a weak panel.
+
 NOISE ROBUSTNESS: Ignore small-talk, audio issues, and off-topic conversation.
 RESUME SCREENING: For "Resume Initial Screening" — check if the interviewer explicitly asked about or verified claims made in the resume (projects, tools, years of experience, certifications).
 
@@ -114,12 +138,12 @@ Return ONLY this exact JSON structure:
   "score_category": "Good|Moderate|Poor",
   "confidence": <0.0–1.0>,
   "categories": {
-    "Mandatory Skill Coverage":   <0.0–2.0>,
-    "Technical Depth":            <0.0–2.0>,
-    "Resume Initial Screening":   <0.0–2.0>,
-    "Scenario / Risk Evaluation": <0.0–2.0>,
-    "Framework Knowledge":        <0.0–1.0>,
-    "Hands-on Validation":        <0.0–1.0>
+    "Mandatory Skill Coverage":   <one of 0 / 0.5 / 1 / 1.5 / 2>,
+    "Technical Depth":            <one of 0 / 0.5 / 1 / 1.5 / 2>,
+    "Resume Initial Screening":   <one of 0 / 0.5 / 1 / 1.5 / 2>,
+    "Scenario / Risk Evaluation": <one of 0 / 0.5 / 1 / 1.5 / 2>,
+    "Framework Knowledge":        <one of 0 / 0.25 / 0.5 / 0.75 / 1>,
+    "Hands-on Validation":        <one of 0 / 0.25 / 0.5 / 0.75 / 1>
   },
   "evidence": {
     "Mandatory Skill Coverage":   ["<exact interviewer question>"],
@@ -171,14 +195,41 @@ function _parseJSON(text) {
 
 // ─── Clamp & Validate Scores ─────────────────────────────────────────────────
 
+/** Snap a raw score to the nearest allowed step for its dimension. */
+function _snapToStep(raw, cfg) {
+  return cfg.steps.reduce((best, step) =>
+    Math.abs(step - raw) < Math.abs(best - raw) ? step : best, cfg.steps[0]);
+}
+
 function _clampScores(parsed) {
   if (!parsed || !parsed.categories) throw new Error('Missing categories in LLM response');
+  const missing = [];
+  const offGrid = [];
   let sum = 0;
   for (const [dim, cfg] of Object.entries(L1_DIMENSIONS)) {
-    const raw = parseFloat(parsed.categories[dim] ?? 0);
-    parsed.categories[dim] = Math.min(Math.max(0, raw), cfg.max);
-    sum += parsed.categories[dim];
+    const provided = parsed.categories[dim];
+    if (provided === undefined || provided === null || provided === '') missing.push(dim);
+    const raw = parseFloat(provided ?? 0);
+    const clamped = Number.isFinite(raw) ? Math.min(Math.max(0, raw), cfg.max) : 0;
+    const snapped = _snapToStep(clamped, cfg);
+    if (Math.abs(snapped - clamped) > 1e-9) offGrid.push(`${dim} ${clamped}->${snapped}`);
+    parsed.categories[dim] = snapped;
+    sum += snapped;
   }
+
+  const unrecognised = Object.keys(parsed.categories).filter(k => !L1_DIMENSIONS[k]);
+  for (const k of unrecognised) delete parsed.categories[k];
+
+  if (missing.length)      console.warn(`[L1Scoring] LLM omitted dimensions (scored 0): ${missing.join(', ')}`);
+  if (offGrid.length)      console.log(`[L1Scoring] Snapped off-grid scores: ${offGrid.join(', ')}`);
+  if (unrecognised.length) console.warn(`[L1Scoring] Dropped unrecognised categories: ${unrecognised.join(', ')}`);
+
+  parsed.scoring_warnings = {
+    missing_dimensions: missing,
+    snapped_to_grid: offGrid,
+    dropped_categories: unrecognised,
+  };
+
   parsed.score = Math.round(sum * 10) / 10;
   parsed.score_percent = Math.round((parsed.score / MAX_L1_SCORE) * 100);
   parsed.score_category = parsed.score >= 8.0 ? 'Good' : parsed.score >= 5.0 ? 'Moderate' : 'Poor';
@@ -224,7 +275,7 @@ Write the professional panel performance summary in exactly 3 paragraphs (no bul
   try {
     const response = await callLLM(
       [{ role: 'system', content: PANEL_SUMMARY_SYSTEM }, { role: 'user', content: prompt }],
-      { temperature: 0.2, maxTokens: 800, think: false }
+      { temperature: SCORING_TEMPERATURE, maxTokens: 800, think: false, seed: SCORING_SEED }
     );
     return response.trim();
   } catch (err) {
@@ -259,22 +310,26 @@ async function runL1Evaluation(input) {
     throw new Error('runL1Evaluation: jobId and transcript are required');
   }
 
-  console.log(`[L1Scoring] Starting evaluation — jobId=${jobId} candidate="${candidateName}" transcriptLen=${transcript.length}`);
+  console.log(`[L1Scoring] Starting evaluation — jobId=${jobId} candidate="${candidateName}" ` +
+    `transcriptLen=${transcript.length} seed=${SCORING_SEED}`);
 
   // ── Step 1: Score the transcript ──────────────────────────────────────────
+  // Deterministic: temperature 0 + fixed seed, so identical input => identical score.
   const scoringPrompt = _buildScoringPrompt(jobId, jd, resumeText, transcript);
-  const llmRaw = await callLLM(
+  const llmResult = await callLLMWithMeta(
     [
       { role: 'system', content: L1_SCORING_SYSTEM_PROMPT },
       { role: 'user', content: scoringPrompt }
     ],
-    { temperature: 0.1, maxTokens: 2000, think: false }
+    { temperature: SCORING_TEMPERATURE, maxTokens: 2000, think: false, seed: SCORING_SEED }
   );
 
-  const parsedScore = _parseJSON(llmRaw);
+  const parsedScore = _parseJSON(llmResult.content);
   if (!parsedScore) throw new Error('L1 scoring LLM returned invalid JSON');
   _clampScores(parsedScore);
-  console.log(`[L1Scoring] Score=${parsedScore.score}/${MAX_L1_SCORE} Category=${parsedScore.score_category}`);
+  console.log(`[L1Scoring] Score=${parsedScore.score}/${MAX_L1_SCORE} Category=${parsedScore.score_category} ` +
+    `model=${llmResult.model}@${llmResult.modelDigest || 'unknown'} ` +
+    `promptTokens=${llmResult.promptTokens} outputTokens=${llmResult.outputTokens}`);
 
   // ── Step 2: Panel summary + Moderation run in parallel ───────────────────
   const [panelSummary, moderationResult] = await Promise.all([
@@ -298,6 +353,23 @@ async function runL1Evaluation(input) {
   parsedScore.candidate_name = candidateName;
   parsedScore.panel_name    = panelName;
   parsedScore.evaluated_at  = new Date().toISOString();
+
+  // Scoring provenance — see l2ScoringService for rationale.
+  parsedScore.scoring_meta = {
+    provider: llmResult.provider,
+    model: llmResult.model,
+    model_digest: llmResult.modelDigest || null,
+    model_parameter_size: llmResult.modelParameterSize || null,
+    model_quantization: llmResult.modelQuantization || null,
+    seed: llmResult.seed,
+    temperature: SCORING_TEMPERATURE,
+    num_ctx: llmResult.numCtx,
+    prompt_tokens: llmResult.promptTokens,
+    output_tokens: llmResult.outputTokens,
+    done_reason: llmResult.doneReason,
+    transcript_chars: transcript.length,
+    rubric_version: 'l1-v2-grid',
+  };
 
   console.log(`[L1Scoring] Evaluation complete — jobId=${jobId}`);
 

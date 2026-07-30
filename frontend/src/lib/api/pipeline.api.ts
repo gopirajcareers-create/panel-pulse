@@ -1,6 +1,22 @@
 import apiClient from './client';
 import { sanitizeText } from '@/lib/utils/sanitize';
 
+/**
+ * The backend health-gates scoring and returns 503 when the on-prem model is
+ * down, so nothing was scored and the request is safe to retry. Surface that as
+ * a clear message instead of a generic "Request failed with status code 503".
+ */
+function rethrowScoringError(err: any, stage: string): never {
+  const data = err?.response?.data;
+  if (err?.response?.status === 503 && data?.code) {
+    const e = new Error(data.error || `${stage} scoring is unavailable — please retry shortly.`);
+    (e as any).code = data.code;
+    (e as any).retryable = true;
+    throw e;
+  }
+  throw err;
+}
+
 export interface PipelineCandidate {
   id: string;
   jobId: string;
@@ -201,7 +217,9 @@ export const pipelineApi = {
     l1Transcript: string;
   }): Promise<any> {
     // Stage 2 starts an async job
-    const startResp = await apiClient.post('/api/v1/pipeline/stage2', data, { timeout: 15000 });
+    const startResp = await apiClient
+      .post('/api/v1/pipeline/stage2', data, { timeout: 15000 })
+      .catch(err => rethrowScoringError(err, 'Stage 2'));
     const jobId = startResp.data?.async_job_id;
     if (!jobId) throw new Error('No job ID returned from pipeline scoring service');
 
@@ -235,7 +253,9 @@ export const pipelineApi = {
     candidateStatus: 'Selected' | 'Rejected';
   }): Promise<any> {
     // Stage 3 starts an async job
-    const startResp = await apiClient.post('/api/v1/pipeline/stage3', data, { timeout: 15000 });
+    const startResp = await apiClient
+      .post('/api/v1/pipeline/stage3', data, { timeout: 15000 })
+      .catch(err => rethrowScoringError(err, 'Stage 3'));
     const jobId = startResp.data?.async_job_id;
     if (!jobId) throw new Error('No job ID returned from pipeline scoring service');
 

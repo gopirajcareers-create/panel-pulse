@@ -84,8 +84,10 @@ async function start() {
       console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
       console.log(`📊 API Base: http://localhost:${port}/api/v1`);
       const _ollamaBase = process.env.OLLAMA_BASE_URL;
-      const _llmProvider = _ollamaBase ? `Ollama (${_ollamaBase})` : (process.env.GROQ_API_KEY ? 'GROQ (cloud)' : (process.env.MISTRAL_API_KEY ? 'Mistral (cloud)' : '⚠️  NONE configured'));
-      console.log(`🤖 LLM provider: ${_llmProvider}`);
+      const _llmProvider = _ollamaBase
+        ? `Ollama (${_ollamaBase}) model=${process.env.OLLAMA_MODEL_NAME || 'qwen3:latest'}`
+        : '⚠️  NONE configured — set OLLAMA_BASE_URL';
+      console.log(`🤖 LLM provider: ${_llmProvider}  [on-prem only, no cloud fallback]`);
       console.log(`🗄️  MongoDB URI set: ${!!process.env.MONGODB_URI}\n`);
     });
     // Allow long-running LLM evaluation requests (up to 5 min)

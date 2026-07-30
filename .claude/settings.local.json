@@ -8,7 +8,36 @@
       "Bash(npm start *)",
       "Bash(curl -s http://localhost:3000/api/v1/health)",
       "Bash(npm run *)",
-      "Bash(node test-mistral.js)"
+      "Bash(node test-mistral.js)",
+      "Bash(git pull *)",
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(curl -s -o /dev/null -w \"Frontend: %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(start http://localhost:5173)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(curl -X POST http://localhost:3000/api/v1/auth/dev-login -H \"Content-Type: application/json\" -d \"{}\" -v)",
+      "Bash(git checkout *)",
+      "Bash(git commit -m 'fix: change default landing page to Dashboard-I after login *)",
+      "Bash(git commit -m 'feat: include pipeline evaluations in Panel Insights page *)",
+      "Bash(git fetch *)",
+      "Bash(ssh indium@10.10.142.91 \"cd /opt/panel-pulse && git log --oneline -6\")",
+      "Bash(grep -E \"\\\\.ts$|\\\\.js$\")",
+      "Bash(git merge feature-report --no-ff -m 'Merge feature-report: Add comprehensive reporting system *)",
+      "Read(//c/Program Files/Git/**)",
+      "Read(//c/Program Files/Git/etc/post-install/**)",
+      "Read(//c/Program Files/Git/etc/**)",
+      "Bash(curl -s -o /dev/null -w \"backend /health: %{http_code}\\\\n\" http://localhost:3000/health)",
+      "Bash(curl -s -o /dev/null -w \"frontend 5173: %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"=== tsc exit: $? ===\")",
+      "Bash(git rev-list *)",
+      "Bash(gh api *)",
+      "Bash(node scripts/_diag_l2_ctx.js)",
+      "Bash(node scripts/_verify_resilience.js)"
+    ],
+    "additionalDirectories": [
+      "C:\\Program Files\\Git\\etc"
     ]
   }
 }

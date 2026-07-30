@@ -1,8 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const http = require('http');
-const https = require('https');
 const { ping, getMongoClient } = require('../services/mongoClient');
+const { checkOllamaHealth, OLLAMA_MODEL, NUM_CTX, MAX_ATTEMPTS } = require('../services/llmClient');
 
 router.get('/', (req, res) => {
   res.json({ 
@@ -27,69 +26,51 @@ router.get('/db', async (req, res) => {
 
 /**
  * GET /api/v1/health/llm
- * Checks Ollama connectivity and lists available models.
- * Useful for diagnosing 404 / model-not-found errors.
+ * Reports whether the on-prem scoring engine is usable. Uses the same probe the
+ * stage2/stage3 health-gate uses, so a dashboard can never disagree with what
+ * the scoring routes will actually do.
+ *
+ * ?force=1 bypasses the short-lived cache.
+ * Returns 503 when scoring would be refused — safe for an uptime monitor.
  */
 router.get('/llm', async (req, res) => {
-  const ollamaBase = (process.env.OLLAMA_BASE_URL || '').replace(/\/$/, '');
-  const configuredModel = process.env.OLLAMA_MODEL_NAME || '(not set)';
-  const groqConfigured = !!process.env.GROQ_API_KEY;
+  const health = await checkOllamaHealth({ force: req.query.force === '1' });
 
-  if (!ollamaBase) {
-    return res.json({
-      provider: groqConfigured ? 'groq' : 'none',
-      groq_configured: groqConfigured,
-      ollama_configured: false,
-      timestamp: new Date().toISOString()
-    });
-  }
-
-  // Probe Ollama /api/tags to list installed models
-  try {
-    const tagsUrl = new URL(ollamaBase + '/api/tags');
-    const httpLib = tagsUrl.protocol === 'https:' ? https : http;
-    const result = await new Promise((resolve, reject) => {
-      const req2 = httpLib.get({
-        hostname: tagsUrl.hostname,
-        port: tagsUrl.port || (tagsUrl.protocol === 'https:' ? 443 : 80),
-        path: tagsUrl.pathname,
-        timeout: 5000
-      }, (r) => {
-        let body = '';
-        r.on('data', c => { body += c; });
-        r.on('end', () => resolve({ status: r.statusCode, body }));
-      });
-      req2.on('error', reject);
-      req2.on('timeout', () => { req2.destroy(); reject(new Error('timeout')); });
-    });
-
-    let models = [];
-    try { models = JSON.parse(result.body).models || []; } catch (_) {}
-    const modelNames = models.map(m => m.name || m.model);
-    const modelFound = modelNames.some(n => n === configuredModel || n.startsWith(configuredModel.split(':')[0]));
-
-    return res.json({
-      provider: 'ollama',
-      ollama_base: ollamaBase,
-      ollama_reachable: result.status === 200,
-      ollama_status: result.status,
-      configured_model: configuredModel,
-      model_found: modelFound,
-      available_models: modelNames,
-      hint: !modelFound ? `Model '${configuredModel}' not found. Set OLLAMA_MODEL_NAME to one of the available_models.` : 'OK',
-      timestamp: new Date().toISOString()
-    });
-  } catch (err) {
+  if (!health.base) {
     return res.status(503).json({
-      provider: 'ollama',
-      ollama_base: ollamaBase,
-      ollama_reachable: false,
-      error: err.message,
-      configured_model: configuredModel,
-      hint: 'Cannot reach Ollama server. Check OLLAMA_BASE_URL and network connectivity.',
+      provider: 'none',
+      scoring_available: false,
+      ollama_configured: false,
+      error: health.error,
+      hint: 'Set OLLAMA_BASE_URL. Ollama is the only supported LLM provider; there is no cloud fallback.',
       timestamp: new Date().toISOString()
     });
   }
+
+  const payload = {
+    provider: 'ollama',
+    scoring_available: health.ok,
+    ollama_base: health.base,
+    ollama_reachable: health.reachable,
+    configured_model: health.model,
+    model_found: health.modelFound,
+    model_digest: health.digest,
+    // ':latest' is mutable — a re-pull silently changes scoring output.
+    model_tag_pinned: !/:latest$/.test(health.model),
+    available_models: health.models,
+    num_ctx: NUM_CTX,
+    max_attempts: MAX_ATTEMPTS,
+    cached: health.cached,
+    error: health.error,
+    hint: health.ok
+      ? 'OK'
+      : health.reachable
+        ? `Model '${OLLAMA_MODEL}' not installed. Run: ollama pull ${OLLAMA_MODEL} — or set OLLAMA_MODEL_NAME to one of available_models.`
+        : 'Cannot reach Ollama. Check OLLAMA_BASE_URL, the host, and network connectivity. Scoring requests will be refused with 503 until it returns.',
+    timestamp: new Date().toISOString()
+  };
+
+  return res.status(health.ok ? 200 : 503).json(payload);
 });
 
 module.exports = router;
