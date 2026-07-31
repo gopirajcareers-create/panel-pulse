@@ -20,6 +20,7 @@
 
 const { callLLMWithMeta, callLLM } = require('./llmClient');
 const { normalizeTranscript, questionCountsBySpeaker, hasTurnLabels } = require('./transcriptNormalizer');
+const { scoreFromEvidence } = require('./evidenceTierScoring');
 const { analyzeInterviewModeration } = require('./moderationService');
 
 // ─── Determinism ─────────────────────────────────────────────────────────────
@@ -32,9 +33,13 @@ const SCORING_TEMPERATURE = 0;
 // `steps` = the only scores allowed per dimension (see l2ScoringService for the
 // full rationale). L1 already tended to land on this grid; making it explicit
 // keeps L1 and L2 on the same footing and prevents interpolated values.
+// `depthDimension` switches the evidence unit from "distinct topics probed" to
+// "topics probed with a how/why question". Technical Depth is DEFINED as
+// explanation-seeking, so counting every question there would award 75% for three
+// yes/no questions on the one dimension that exists to measure depth.
 const L1_DIMENSIONS = {
   'Mandatory Skill Coverage':   { max: 2.0, steps: [0, 0.5, 1.0, 1.5, 2.0], focus: 'Probing mandatory technologies explicitly listed in the JD.' },
-  'Technical Depth':            { max: 2.0, steps: [0, 0.5, 1.0, 1.5, 2.0], focus: 'Quality of follow-up questions ("how" and "why").' },
+  'Technical Depth':            { max: 2.0, steps: [0, 0.5, 1.0, 1.5, 2.0], depthDimension: true, focus: 'Quality of follow-up questions ("how" and "why").' },
   'Resume Initial Screening':   { max: 2.0, steps: [0, 0.5, 1.0, 1.5, 2.0], focus: 'Did L1 verify the specific experience and project claims written in the resume?' },
   'Scenario / Risk Evaluation': { max: 2.0, steps: [0, 0.5, 1.0, 1.5, 2.0], focus: 'Presenting real-world coding / problem-solving scenarios.' },
   'Framework Knowledge':        { max: 1.0, steps: [0, 0.25, 0.5, 0.75, 1.0], focus: 'Probing specific frameworks mentioned in the JD.' },
@@ -71,14 +76,15 @@ CRITICAL RULES:
 1. Return ONLY a valid JSON object. No markdown, no explanation, no preamble.
 2. All string values must be JSON-safe (no raw newlines).
 3. Evidence MUST only quote lines spoken by the INTERVIEWER / PANEL — never the candidate.
-4. Score MAXIMUM points when the panelist genuinely did an excellent job on that dimension.
-5. Score 0 when the dimension was entirely absent from the interview.
-6. Do NOT artificially deflate scores — if the panelist did a thorough job, award full marks.
-7. You are scoring the QUALITY OF THE PANEL'S QUESTIONS, never the quality of the
-   candidate's answers. A panel that asked excellent questions scores full marks even
-   if the candidate answered everything badly, and vice versa.
-8. Award each dimension ONLY a value from that dimension's allowed score list. Never
-   interpolate between the allowed values.`;
+4. You do NOT choose the numeric scores. They are computed from the evidence you
+   report, so your task is to report that evidence completely and accurately.
+   Omitting a question the panel really asked lowers their score for no reason.
+5. Report NO evidence for a dimension only when it was genuinely absent from the
+   interview.
+6. You are reporting the PANEL'S QUESTIONS, never the quality of the candidate's
+   answers. A question the candidate fumbled is still a question the panel asked,
+   and must still be reported.
+7. Never invent a question. Every quote must appear in the transcript.`;
 
 // ─── Core Scoring Function ───────────────────────────────────────────────────
 
@@ -110,13 +116,13 @@ function _buildScoringPrompt(jobId, jd, resumeText, transcript) {
       'answers them. Attribute every question to the speaker whose line it appears on.\n'
     : '';
 
+  // Max is shown for context (it signals relative weight) but not the step grid.
   const dimensionTable = Object.entries(L1_DIMENSIONS)
-    .map(([name, cfg]) => `  • ${name} (max ${cfg.max}, allowed scores: ${cfg.steps.join(' / ')}): ${cfg.focus}`)
+    .map(([name, cfg]) => `  • ${name} (weight ${cfg.max}): ${cfg.focus}`)
     .join('\n');
 
-  const gridTable = Object.entries(L1_DIMENSIONS)
-    .map(([name, cfg]) => `  • ${name}: choose exactly one of ${cfg.steps.join(' / ')}`)
-    .join('\n');
+  // No allowed-values grid in the prompt any more: the model does not pick the
+  // score, so listing the steps would only invite it to try.
 
   return `/no_think
 
@@ -139,57 +145,77 @@ ${formatNote}${safeTranscript}
 === SCORING DIMENSIONS ===
 ${dimensionTable}
 
-=== SCORING INSTRUCTIONS ===
+=== YOUR JOB: REPORT THE EVIDENCE, NOT THE SCORE ===
+The numeric score is computed mechanically from the evidence you report, so your
+only task is to report that evidence COMPLETELY and HONESTLY. Under-reporting a
+question the panel really asked lowers their score for no reason; inventing one
+they did not ask inflates it. Both are failures.
+
 For EACH dimension:
-1. Identify ALL questions asked by the INTERVIEWER that relate to this dimension.
-2. Assess how deep, specific, and technically relevant those questions were.
-3. Assign a score between 0 and the dimension maximum.
-4. Quote EVERY distinct interviewer question you counted in step 1 — up to 6 per
-   dimension. The evidence must justify the score on its own: a reader comparing
-   your quotes to the transcript must not find a relevant question you left out.
-   If the panel raised several named technologies or topics, quote the question for
-   EACH one rather than a single representative example.
+1. Find EVERY question the INTERVIEWER asked that relates to this dimension.
+2. Record each one as an evidence item with four fields:
+     "quote"        — the interviewer's actual words (trimmed, JSON-safe)
+     "topic"        — the specific subject probed, 1-4 words (e.g. "JMeter",
+                      "Grafana dashboards", "connection pooling"). Use the SAME
+                      topic string when several questions probe the same subject,
+                      and DIFFERENT strings for different subjects. This is what
+                      breadth is measured from, so it must be accurate.
+     "probes_depth" — true if the question asks HOW, WHY, or WHAT IF, or otherwise
+                      demands explanation. False for existence checks answerable
+                      with yes/no ("Have you worked with AWS?", "Do you know
+                      Docker?").
+     "follows_up"   — true ONLY if this question builds on the candidate's
+                      PREVIOUS ANSWER — drilling further into something they just
+                      said. False when it opens a new subject.
+3. List up to 8 evidence items per dimension. If the panel probed 5 different
+   JD technologies, report 5 items with 5 different topics — never one
+   representative example.
 
-Score thresholds per dimension:
-  - MAX score: Exhaustive probing; every sub-area covered with follow-ups.
-  - 75% max: Strong coverage; only minor gaps.
-  - 50% max: Basic probing; surface-level questions without follow-ups.
-  - 25% max: Very brief or incidental mention only.
-  - 0:        Dimension entirely absent from the interview.
+How the score follows from your evidence (for your understanding — do not compute it):
+  - 1 subject probed        -> 25% of the dimension max
+  - 2 subjects              -> 50%
+  - more than 2 subjects    -> 75%
+  - that, plus a genuine follow-up chain -> 100%
+For "Technical Depth" only questions with probes_depth=true are counted, because
+that dimension measures explanation-seeking rather than coverage.
 
-=== ALLOWED SCORE VALUES (MANDATORY) ===
-Each dimension accepts ONLY these exact values. Any other number is invalid:
-${gridTable}
-Pick the single closest allowed value. Do NOT output values in between (no 0.2, 0.3, 0.6, 1.2, 1.8).
+=== DEPTH CLAIM ===
+For each dimension set "depth_demonstrated" to true ONLY when the panel drilled
+into the area with genuine follow-ups ("how did you do that?", "why that
+approach?", "what would you do if..."). Set it to false for surface-level
+coverage. Do not set it true on every dimension out of politeness — a dimension
+covered only by yes/no questions is false. Full marks additionally require a real
+follow-up chain to be visible in the evidence you reported, so an unsupported
+claim here will not raise the score.
 
 SCORE THE QUESTIONS, NOT THE ANSWERS: a weak candidate does not make a weak panel.
+A panel that asked about Grafana still gets Grafana evidence even if the candidate
+answered "I have only heard the name". Judge what was ASKED.
 
 NOISE ROBUSTNESS: Ignore small-talk, audio issues, and off-topic conversation.
 RESUME SCREENING: For "Resume Initial Screening" — check if the interviewer explicitly asked about or verified claims made in the resume (projects, tools, years of experience, certifications).
 
 === REQUIRED OUTPUT FORMAT ===
-Return ONLY this exact JSON structure:
+Return ONLY this exact JSON structure. Every dimension key must be present in
+evidence_detail and depth_demonstrated, even when the array is empty.
 {
   "job_id": "${jobId}",
-  "score": <exact sum of all 6 category scores, rounded to 1 decimal>,
-  "score_percent": <score as percentage of 10.0, integer>,
-  "score_category": "Good|Moderate|Poor",
   "confidence": <0.0–1.0>,
-  "categories": {
-    "Mandatory Skill Coverage":   <one of 0 / 0.5 / 1 / 1.5 / 2>,
-    "Technical Depth":            <one of 0 / 0.5 / 1 / 1.5 / 2>,
-    "Resume Initial Screening":   <one of 0 / 0.5 / 1 / 1.5 / 2>,
-    "Scenario / Risk Evaluation": <one of 0 / 0.5 / 1 / 1.5 / 2>,
-    "Framework Knowledge":        <one of 0 / 0.25 / 0.5 / 0.75 / 1>,
-    "Hands-on Validation":        <one of 0 / 0.25 / 0.5 / 0.75 / 1>
+  "evidence_detail": {
+    "Mandatory Skill Coverage":   [{"quote": "<interviewer's words>", "topic": "<subject probed>", "probes_depth": false, "follows_up": false}],
+    "Technical Depth":            [{"quote": "<interviewer's words>", "topic": "<subject probed>", "probes_depth": true, "follows_up": true}],
+    "Resume Initial Screening":   [{"quote": "<interviewer's words>", "topic": "<resume claim probed>", "probes_depth": false, "follows_up": false}],
+    "Scenario / Risk Evaluation": [{"quote": "<interviewer's words>", "topic": "<scenario posed>", "probes_depth": true, "follows_up": false}],
+    "Framework Knowledge":        [{"quote": "<interviewer's words>", "topic": "<framework probed>", "probes_depth": false, "follows_up": false}],
+    "Hands-on Validation":        [{"quote": "<interviewer's words>", "topic": "<tool or practice probed>", "probes_depth": false, "follows_up": false}]
   },
-  "evidence": {
-    "Mandatory Skill Coverage":   ["<every interviewer question about a JD-mandatory technology, one per technology raised>"],
-    "Technical Depth":            ["<every interviewer follow-up probing how/why>"],
-    "Resume Initial Screening":   ["<every interviewer question verifying a resume claim>"],
-    "Scenario / Risk Evaluation": ["<every scenario question>"],
-    "Framework Knowledge":        ["<every framework question>"],
-    "Hands-on Validation":        ["<every coding/tools question>"]
+  "depth_demonstrated": {
+    "Mandatory Skill Coverage":   <true|false>,
+    "Technical Depth":            <true|false>,
+    "Resume Initial Screening":   <true|false>,
+    "Scenario / Risk Evaluation": <true|false>,
+    "Framework Knowledge":        <true|false>,
+    "Hands-on Validation":        <true|false>
   },
   "dimension_summaries": {
     "Mandatory Skill Coverage":   "<one sentence verdict>",
@@ -231,65 +257,119 @@ function _parseJSON(text) {
   try { return JSON.parse(str.slice(start, end + 1)); } catch (_) { return null; }
 }
 
-// ─── Clamp & Validate Scores ─────────────────────────────────────────────────
+// ─── Derive Scores From Evidence ──────────────────────────────────────────────
+//
+// No _snapToStep here any more: evidenceTierScoring maps a tier directly onto the
+// dimension's `steps` array, so an off-grid value cannot be produced in the first
+// place and there is nothing to snap.
 
-/** Snap a raw score to the nearest allowed step for its dimension. */
-function _snapToStep(raw, cfg) {
-  return cfg.steps.reduce((best, step) =>
-    Math.abs(step - raw) < Math.abs(best - raw) ? step : best, cfg.steps[0]);
+/**
+ * Coerce whatever the model returned for a dimension into evidence items.
+ *
+ * Accepts the tagged object form and the older bare-string form, because stored
+ * transcripts get re-scored and an older model response must not crash the run.
+ * A bare string becomes an untagged item, which still counts once toward breadth.
+ */
+function _coerceEvidenceItems(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(item => {
+    if (typeof item === 'string') return { quote: item.trim(), topic: '', follows_up: false };
+    if (item && typeof item === 'object') {
+      return {
+        quote: String(item.quote ?? item.text ?? '').trim(),
+        topic: String(item.topic ?? '').trim(),
+        follows_up: item.follows_up === true,
+      };
+    }
+    return null;
+  }).filter(it => it && it.quote);
 }
 
+/**
+ * Derive every dimension score from the reported evidence.
+ *
+ * The model no longer picks the numbers — see evidenceTierScoring for why. It is
+ * still asked for `categories`, but only so a large model-vs-derived gap can be
+ * logged as a signal that evidence was under-reported.
+ */
 function _clampScores(parsed) {
-  if (!parsed || !parsed.categories) throw new Error('Missing categories in LLM response');
-  const missing = [];
-  const offGrid = [];
-  let sum = 0;
-  for (const [dim, cfg] of Object.entries(L1_DIMENSIONS)) {
-    const provided = parsed.categories[dim];
-    if (provided === undefined || provided === null || provided === '') missing.push(dim);
-    const raw = parseFloat(provided ?? 0);
-    const clamped = Number.isFinite(raw) ? Math.min(Math.max(0, raw), cfg.max) : 0;
-    const snapped = _snapToStep(clamped, cfg);
-    if (Math.abs(snapped - clamped) > 1e-9) offGrid.push(`${dim} ${clamped}->${snapped}`);
-    parsed.categories[dim] = snapped;
-    sum += snapped;
+  if (!parsed) throw new Error('Empty LLM response');
+
+  // ── Normalise the evidence into tagged items ──
+  const evidenceDetail = {};
+  const emptyDims = [];
+  for (const dim of Object.keys(L1_DIMENSIONS)) {
+    const items = _coerceEvidenceItems(
+      parsed.evidence_detail?.[dim] ?? parsed.evidence?.[dim]
+    );
+    evidenceDetail[dim] = items;
+    if (!items.length) emptyDims.push(dim);
   }
 
-  const unrecognised = Object.keys(parsed.categories).filter(k => !L1_DIMENSIONS[k]);
-  for (const k of unrecognised) delete parsed.categories[k];
+  const depthClaims = {};
+  for (const dim of Object.keys(L1_DIMENSIONS)) {
+    depthClaims[dim] = parsed.depth_demonstrated?.[dim] === true;
+  }
 
-  if (missing.length)      console.warn(`[L1Scoring] LLM omitted dimensions (scored 0): ${missing.join(', ')}`);
-  if (offGrid.length)      console.log(`[L1Scoring] Snapped off-grid scores: ${offGrid.join(', ')}`);
-  if (unrecognised.length) console.warn(`[L1Scoring] Dropped unrecognised categories: ${unrecognised.join(', ')}`);
+  const modelScores = {};
+  for (const dim of Object.keys(L1_DIMENSIONS)) {
+    const raw = parseFloat(parsed.categories?.[dim]);
+    if (Number.isFinite(raw)) modelScores[dim] = raw;
+  }
 
-  parsed.scoring_warnings = {
-    missing_dimensions: missing,
-    snapped_to_grid: offGrid,
-    dropped_categories: unrecognised,
-  };
+  // ── Derive the scores ──
+  const { scores, audit, divergences } = scoreFromEvidence({
+    dimensions: L1_DIMENSIONS, evidenceDetail, depthClaims, modelScores,
+  });
 
+  parsed.categories = scores;
+  parsed.evidence_audit = audit;
+
+  // Keep `evidence` as Record<string, string[]> — the frontend (DimensionCard,
+  // EvidenceSection, ExportButton) reads that shape, and the quotes are now
+  // derived from the same items the score came from, so they cannot disagree.
+  parsed.evidence = {};
+  parsed.evidence_detail = evidenceDetail;
+  for (const dim of Object.keys(L1_DIMENSIONS)) {
+    parsed.evidence[dim] = evidenceDetail[dim].map(it => it.quote);
+  }
+
+  const unrecognised = Object.keys(parsed.evidence_detail || {}).filter(k => !L1_DIMENSIONS[k]);
+  for (const k of unrecognised) delete parsed.evidence_detail[k];
+
+  if (emptyDims.length)    console.warn(`[L1Scoring] No evidence reported (scored 0): ${emptyDims.join(', ')}`);
+  if (divergences.length)  console.warn(`[L1Scoring] Model score diverged from evidence — likely under-reported evidence: ${divergences.join('; ')}`);
+  if (unrecognised.length) console.warn(`[L1Scoring] Dropped unrecognised dimensions: ${unrecognised.join(', ')}`);
+
+  const sum = Object.values(scores).reduce((s, v) => s + v, 0);
   parsed.score = Math.round(sum * 10) / 10;
   parsed.score_percent = Math.round((parsed.score / MAX_L1_SCORE) * 100);
   parsed.score_category = parsed.score >= 8.0 ? 'Good' : parsed.score >= 5.0 ? 'Moderate' : 'Poor';
-  // Ensure all evidence arrays exist
-  for (const dim of Object.keys(L1_DIMENSIONS)) {
-    if (!Array.isArray(parsed.evidence?.[dim])) {
-      parsed.evidence = parsed.evidence || {};
-      parsed.evidence[dim] = [];
-    }
+
+  // "We went deep — why not 2/2?" is the most likely panel query, so record exactly
+  // which requirement was missed rather than leaving it to be inferred.
+  const fullMarksDenied = Object.entries(audit)
+    .filter(([, a]) => a.top_tier_denied)
+    .map(([dim, a]) => `${dim}: ${a.top_tier_denial_reason} ` +
+      `(${a.units} ${a.scored_on.replace(/_/g, ' ')}, ${a.follow_up_chains} chain(s))`);
+  if (fullMarksDenied.length) {
+    console.log(`[L1Scoring] Full marks withheld — ${fullMarksDenied.join('; ')}`);
   }
 
-  // A non-zero score with a single quote (or none) is unauditable: the reader cannot
-  // tell whether the panel asked one thing or six. Surfacing it beats a silent gap —
-  // this is how a score that looked unjustified ("panel never asked about X") turned
-  // out to be a reporting problem rather than a scoring one.
-  const thinEvidence = Object.keys(L1_DIMENSIONS)
-    .filter(dim => parsed.categories[dim] > 0 && parsed.evidence[dim].length < 2)
-    .map(dim => `${dim} (${parsed.evidence[dim].length} quote(s), scored ${parsed.categories[dim]})`);
-  if (thinEvidence.length) {
-    console.warn(`[L1Scoring] Thin evidence — score may look unjustified: ${thinEvidence.join('; ')}`);
+  const untagged = Object.entries(audit)
+    .filter(([, a]) => a.untagged_quotes > 0)
+    .map(([dim, a]) => `${dim} (${a.untagged_quotes}/${a.quotes})`);
+  if (untagged.length) {
+    console.warn(`[L1Scoring] Evidence missing topic tags — breadth may be undercounted: ${untagged.join('; ')}`);
   }
-  parsed.scoring_warnings.thin_evidence = thinEvidence;
+
+  parsed.scoring_warnings = {
+    dimensions_without_evidence: emptyDims,
+    model_score_divergences: divergences,
+    dropped_categories: unrecognised,
+    full_marks_denied: fullMarksDenied,
+    untagged_evidence: untagged,
+  };
 
   return parsed;
 }
@@ -386,14 +466,20 @@ async function runL1Evaluation(input) {
       { role: 'system', content: L1_SCORING_SYSTEM_PROMPT },
       { role: 'user', content: scoringPrompt }
     ],
-    // 3000, not 2000: quoting every relevant question (up to 6 per dimension across
-    // 6 dimensions) roughly triples the evidence payload. Too low and Ollama stops
-    // mid-JSON with done_reason=length and the response fails to parse.
-    { temperature: SCORING_TEMPERATURE, maxTokens: 3000, think: false, seed: SCORING_SEED }
+    // 4000: each evidence item is now an object with quote + topic + follows_up
+    // rather than a bare string, across up to 8 items x 6 dimensions. Too low and
+    // Ollama stops mid-JSON with done_reason=length and the response fails to parse.
+    { temperature: SCORING_TEMPERATURE, maxTokens: 4000, think: false, seed: SCORING_SEED }
   );
 
   const parsedScore = _parseJSON(llmResult.content);
   if (!parsedScore) throw new Error('L1 scoring LLM returned invalid JSON');
+  // The score is derived from evidence, so a response carrying neither evidence key
+  // would silently score 0.0 across the board and look like a catastrophic panel
+  // rather than a malformed response. Fail loudly instead.
+  if (!parsedScore.evidence_detail && !parsedScore.evidence) {
+    throw new Error('L1 scoring LLM returned no evidence_detail — cannot derive a score from absent evidence');
+  }
   _clampScores(parsedScore);
   console.log(`[L1Scoring] Score=${parsedScore.score}/${MAX_L1_SCORE} Category=${parsedScore.score_category} ` +
     `model=${llmResult.model}@${llmResult.modelDigest || 'unknown'} ` +
@@ -445,7 +531,10 @@ async function runL1Evaluation(input) {
     transcript_breaks_inserted: norm.insertedBreaks,
     transcript_speakers: norm.speakers,
     question_turns_by_speaker: panelQuestionCounts,
-    rubric_version: 'l1-v4-turns',
+    // v5: dimension scores are DERIVED IN CODE from tiered evidence counts rather
+    // than chosen by the model. Scores are not comparable with earlier versions.
+    scoring_method: 'evidence-tier',
+    rubric_version: 'l1-v5-evidence-tier',
   };
 
   console.log(`[L1Scoring] Evaluation complete — jobId=${jobId}`);

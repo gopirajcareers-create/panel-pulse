@@ -101,6 +101,20 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   console.log('CATEGORY'.padEnd(34) + String(old.score_category ?? '-').padStart(7) +
     String(fresh.score_category ?? '-').padStart(7));
 
+  if (process.argv.includes('--audit')) {
+    console.log('\n=== EVIDENCE AUDIT (how each score was derived) ===');
+    for (const [dim, a] of Object.entries(fresh.evidence_audit || {})) {
+      console.log(`\n${dim}: ${a.derived_score} (tier ${a.tier_index}/4, scored on ${a.scored_on}=${a.units})`);
+      if (a.top_tier_denial_reason) console.log(`  full marks withheld: ${a.top_tier_denial_reason}`);
+      console.log(`  topics(${a.distinct_topics}): ${a.topics.join(' | ') || '(none)'}`);
+      console.log(`  depth-probing subjects=${a.depth_probing_topics} chains=${a.follow_up_chains} ` +
+        `quotes=${a.quotes} untagged=${a.untagged_quotes}`);
+      for (const it of fresh.evidence_detail?.[dim] || []) {
+        console.log(`    (${it.topic || 'UNTAGGED'}) ${it.quote.slice(0, 90)}`);
+      }
+    }
+  }
+
   const m = fresh.scoring_meta || {};
   console.log(`\nNormalisation: ${m.transcript_breaks_inserted} turn boundaries inserted`);
   console.log(`Speakers: ${(m.transcript_speakers || []).join(', ') || '(none detected)'}`);
