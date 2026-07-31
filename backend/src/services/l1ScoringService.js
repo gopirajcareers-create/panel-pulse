@@ -19,6 +19,7 @@
 'use strict';
 
 const { callLLMWithMeta, callLLM } = require('./llmClient');
+const { normalizeTranscript, questionCountsBySpeaker, hasTurnLabels } = require('./transcriptNormalizer');
 const { analyzeInterviewModeration } = require('./moderationService');
 
 // ─── Determinism ─────────────────────────────────────────────────────────────
@@ -102,6 +103,13 @@ function _buildScoringPrompt(jobId, jd, resumeText, transcript) {
     ? transcript.substring(0, MAX_TRANSCRIPT_CHARS) + '\n[... transcript truncated ...]'
     : transcript;
 
+  // Only claim a line format the transcript actually has — see hasTurnLabels().
+  const formatNote = hasTurnLabels(safeTranscript)
+    ? 'Each line is one speaker turn, formatted "Speaker Name H:MM: utterance". The\n' +
+      'INTERVIEWER / PANELIST is whoever asks the questions; the CANDIDATE is whoever\n' +
+      'answers them. Attribute every question to the speaker whose line it appears on.\n'
+    : '';
+
   const dimensionTable = Object.entries(L1_DIMENSIONS)
     .map(([name, cfg]) => `  • ${name} (max ${cfg.max}, allowed scores: ${cfg.steps.join(' / ')}): ${cfg.focus}`)
     .join('\n');
@@ -126,7 +134,7 @@ ${jd.substring(0, MAX_JD_CHARS)}
 ${resumeText ? resumeText.substring(0, MAX_RESUME_CHARS) : 'Resume not available.'}
 
 === L1 INTERVIEW TRANSCRIPT ===
-${safeTranscript}
+${formatNote}${safeTranscript}
 
 === SCORING DIMENSIONS ===
 ${dimensionTable}
@@ -353,12 +361,26 @@ async function runL1Evaluation(input) {
     throw new Error('runL1Evaluation: jobId and transcript are required');
   }
 
+  // Raw meeting exports often carry no line break between turns, leaving speaker
+  // labels mid-sentence ("...so far. Panelist 6:28Do you know Dynatrace?"). The
+  // rubric forbids quoting the candidate, so when the model cannot see where a turn
+  // starts it silently under-credits the panel — on a real record it found 3 of ~16
+  // questions and called the interview shallow.
+  const norm = normalizeTranscript(transcript);
+  const transcriptText = norm.text;
+  const panelQuestionCounts = questionCountsBySpeaker(transcriptText);
+
   console.log(`[L1Scoring] Starting evaluation — jobId=${jobId} candidate="${candidateName}" ` +
     `transcriptLen=${transcript.length} seed=${SCORING_SEED}`);
+  if (!norm.alreadyStructured) {
+    console.log(`[L1Scoring] Normalised transcript — inserted ${norm.insertedBreaks} turn boundaries ` +
+      `across ${norm.speakers.length} speaker(s): ${norm.speakers.join(', ')}. ` +
+      `Question-marked turns per speaker: ${JSON.stringify(panelQuestionCounts)}`);
+  }
 
   // ── Step 1: Score the transcript ──────────────────────────────────────────
   // Deterministic: temperature 0 + fixed seed, so identical input => identical score.
-  const scoringPrompt = _buildScoringPrompt(jobId, jd, resumeText, transcript);
+  const scoringPrompt = _buildScoringPrompt(jobId, jd, resumeText, transcriptText);
   const llmResult = await callLLMWithMeta(
     [
       { role: 'system', content: L1_SCORING_SYSTEM_PROMPT },
@@ -382,7 +404,7 @@ async function runL1Evaluation(input) {
     _generatePanelSummary(parsedScore, jd),
     (async () => {
       try {
-        const modRes = await analyzeInterviewModeration({ l1_transcript: transcript, job_id: jobId });
+        const modRes = await analyzeInterviewModeration({ l1_transcript: transcriptText, job_id: jobId });
         return modRes.success ? modRes.moderation : null;
       } catch (e) {
         console.error('[L1Scoring] Moderation failed (non-fatal):', e.message);
@@ -416,9 +438,14 @@ async function runL1Evaluation(input) {
     transcript_chars: transcript.length,
     // Persisted so an audit can tell a low score caused by a weak panel from one
     // caused by an unscored tail, without re-deriving the cap from code history.
-    transcript_chars_scored: Math.min(transcript.length, MAX_TRANSCRIPT_CHARS),
-    transcript_chars_dropped: Math.max(0, transcript.length - MAX_TRANSCRIPT_CHARS),
-    rubric_version: 'l1-v3-fullctx',
+    transcript_chars_scored: Math.min(transcriptText.length, MAX_TRANSCRIPT_CHARS),
+    transcript_chars_dropped: Math.max(0, transcriptText.length - MAX_TRANSCRIPT_CHARS),
+    // Turn-boundary repair applied before scoring. insertedBreaks > 0 means the raw
+    // export had no line breaks between turns, which suppresses panel attribution.
+    transcript_breaks_inserted: norm.insertedBreaks,
+    transcript_speakers: norm.speakers,
+    question_turns_by_speaker: panelQuestionCounts,
+    rubric_version: 'l1-v4-turns',
   };
 
   console.log(`[L1Scoring] Evaluation complete — jobId=${jobId}`);

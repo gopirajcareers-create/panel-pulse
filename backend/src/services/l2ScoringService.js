@@ -21,6 +21,7 @@
 'use strict';
 
 const { callLLMWithMeta, callLLM } = require('./llmClient');
+const { normalizeTranscript, questionCountsBySpeaker, hasTurnLabels } = require('./transcriptNormalizer');
 const { analyzeInterviewModeration } = require('./moderationService');
 
 // ─── Determinism ─────────────────────────────────────────────────────────────
@@ -128,6 +129,13 @@ function _buildScoringPrompt(jobId, jd, resumeText, l1Transcript, l2Transcript) 
       'For "Resume Screening & Handoff", score ONLY on whether the L2 panel verified the candidate\'s ' +
       'resume claims directly, and cap that dimension at 1.0. Do NOT award credit for handoff you cannot observe.';
 
+  // Only claim a line format the transcript actually has — see hasTurnLabels().
+  const formatNote = hasTurnLabels(safeL2Transcript)
+    ? 'Each line is one speaker turn, formatted "Speaker Name H:MM: utterance". The\n' +
+      'INTERVIEWER / PANELIST is whoever asks the questions; the CANDIDATE is whoever\n' +
+      'answers them. Attribute every question to the speaker whose line it appears on.\n'
+    : '';
+
   const dimensionTable = Object.entries(L2_DIMENSIONS)
     .map(([name, cfg]) => `  • ${name} (max ${cfg.max}, allowed scores: ${cfg.steps.join(' / ')}): ${cfg.focus}`)
     .join('\n');
@@ -155,7 +163,7 @@ ${resumeText ? resumeText.substring(0, MAX_RESUME_CHARS) : 'Resume not available
 ${safeL1Transcript}
 
 === L2 INTERVIEW TRANSCRIPT (To be evaluated) ===
-${safeL2Transcript}
+${formatNote}${safeL2Transcript}
 
 === SCORING DIMENSIONS ===
 ${dimensionTable}
@@ -412,12 +420,25 @@ async function runL2Evaluation(input) {
       `Run Stage 2 first for a fully comparable L2 score.`);
   }
 
+  // Restore turn boundaries before scoring — see l1ScoringService for why an export
+  // without line breaks makes the panel's questions unattributable.
+  const normL2 = normalizeTranscript(l2Transcript);
+  const normL1 = normalizeTranscript(l1Transcript);
+  const l2Text = normL2.text;
+  const l1Text = normL1.text;
+  const panelQuestionCounts = questionCountsBySpeaker(l2Text);
+
   console.log(`[L2Scoring] Starting evaluation — jobId=${jobId} candidate="${candidateName}" ` +
     `L2transcriptLen=${l2Transcript.length} l1Present=${hasL1} l1Len=${l1Transcript.length} seed=${SCORING_SEED}`);
+  if (!normL2.alreadyStructured) {
+    console.log(`[L2Scoring] Normalised L2 transcript — inserted ${normL2.insertedBreaks} turn boundaries ` +
+      `across ${normL2.speakers.length} speaker(s): ${normL2.speakers.join(', ')}. ` +
+      `Question-marked turns per speaker: ${JSON.stringify(panelQuestionCounts)}`);
+  }
 
   // ── Step 1: Score the transcript ──────────────────────────────────────────
   // Deterministic: temperature 0 + fixed seed, so identical input => identical score.
-  const scoringPrompt = _buildScoringPrompt(jobId, jd, resumeText, l1Transcript, l2Transcript);
+  const scoringPrompt = _buildScoringPrompt(jobId, jd, resumeText, l1Text, l2Text);
   const llmResult = await callLLMWithMeta(
     [
       { role: 'system', content: L2_SCORING_SYSTEM_PROMPT },
@@ -439,7 +460,7 @@ async function runL2Evaluation(input) {
     _generatePanelSummary(parsedScore, jd),
     (async () => {
       try {
-        const modRes = await analyzeInterviewModeration({ l1_transcript: l2Transcript, job_id: jobId });
+        const modRes = await analyzeInterviewModeration({ l1_transcript: l2Text, job_id: jobId });
         return modRes.success ? modRes.moderation : null;
       } catch (e) {
         console.error('[L2Scoring] Moderation failed (non-fatal):', e.message);
@@ -480,10 +501,14 @@ async function runL2Evaluation(input) {
     l2_transcript_chars: l2Transcript.length,
     // Persisted so an audit can tell a low score caused by a weak panel from one
     // caused by an unscored tail, without re-deriving the cap from code history.
-    l2_transcript_chars_scored: Math.min(l2Transcript.length, MAX_L2_TRANSCRIPT_CHARS),
-    l2_transcript_chars_dropped: Math.max(0, l2Transcript.length - MAX_L2_TRANSCRIPT_CHARS),
-    l1_context_chars_dropped: Math.max(0, l1Transcript.length - MAX_L1_CONTEXT_CHARS),
-    rubric_version: 'l2-v3-fullctx',
+    l2_transcript_chars_scored: Math.min(l2Text.length, MAX_L2_TRANSCRIPT_CHARS),
+    l2_transcript_chars_dropped: Math.max(0, l2Text.length - MAX_L2_TRANSCRIPT_CHARS),
+    l1_context_chars_dropped: Math.max(0, l1Text.length - MAX_L1_CONTEXT_CHARS),
+    // Turn-boundary repair applied before scoring — see l1ScoringService.
+    transcript_breaks_inserted: normL2.insertedBreaks,
+    transcript_speakers: normL2.speakers,
+    question_turns_by_speaker: panelQuestionCounts,
+    rubric_version: 'l2-v4-turns',
   };
 
   console.log(`[L2Scoring] Evaluation complete — jobId=${jobId}`);
