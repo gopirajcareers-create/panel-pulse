@@ -18,7 +18,7 @@
 
 'use strict';
 
-const { callLLMWithMeta, callLLM } = require('./llmClient');
+const { callLLMWithMeta, callLLM, promptCharBudget, NUM_CTX } = require('./llmClient');
 const { normalizeTranscript, questionCountsBySpeaker, hasTurnLabels } = require('./transcriptNormalizer');
 const { scoreFromEvidence, coerceEvidenceItems } = require('./evidenceTierScoring');
 const { analyzeInterviewModeration } = require('./moderationService');
@@ -50,21 +50,43 @@ const MAX_L1_SCORE = Object.values(L1_DIMENSIONS).reduce((s, d) => s + d.max, 0)
 
 // ─── Input Limits ────────────────────────────────────────────────────────────
 //
-// Derived from the context budget, not picked by feel. The old 12000 discarded
-// 67% of a real 36k-char interview (JD45/SATHISH) — every question in the back
-// two-thirds was invisible to the scorer, which is indistinguishable from a panel
-// that never asked them.
+// The transcript cap is COMPUTED from the context window, not hard-coded. It used
+// to be a literal 28000 derived by hand from num_ctx and num_predict, which broke
+// the moment num_predict rose from 3000 to 4000 for the tier-scoring evidence
+// objects: the input budget shrank by 1000 tokens, the cap did not move, and a real
+// 36k-char interview started failing pre-flight with
+// "~12653 estimated tokens but only 12384 available". A limit derived from a budget
+// must be derived IN CODE from that budget, or it silently goes stale.
 //
-// Budget at num_ctx=16384 and num_predict=3000: 13384 tokens. At the observed
-// ~3.0 chars/token (worse than llmClient's 3.2 estimate, measured on real
-// transcripts) that is ~40000 chars, minus ~8500 for instructions + JD + resume
-// + the JSON skeleton => ~31500 available. 28000 leaves deliberate slack, since
-// exceeding the budget is a hard failure at llmClient's pre-flight guard.
-//
-// Raise OLLAMA_NUM_CTX (the model supports 40960) before raising this further.
-const MAX_TRANSCRIPT_CHARS = parseInt(process.env.L1_MAX_TRANSCRIPT_CHARS || '28000', 10);
+// Truncating at all is already the lossy path — the old 12000 discarded 67% of a
+// real 36k-char interview (JD45/SATHISH), and every question in the dropped tail
+// reads to the scorer as one the panel never asked. So the cap is set as large as
+// the window allows rather than to a comfortable round number.
+const MAX_OUTPUT_TOKENS = 4000;
 const MAX_JD_CHARS = 3000;
 const MAX_RESUME_CHARS = 2000;
+
+// Everything sent that is NOT the truncated transcript: the prompt template, system
+// prompt, JSON skeleton, JD and resume. The template measures ~7500 chars; the reserve
+// is set well above it because underestimating is a hard pre-flight failure while
+// overestimating only costs transcript tail. scripts/test_context_budget.js re-measures
+// the real overhead and fails if this stops leaving ~750 tokens of slack.
+const PROMPT_RESERVE_CHARS = 12000 + MAX_JD_CHARS + MAX_RESUME_CHARS;
+
+// An explicit L1_MAX_TRANSCRIPT_CHARS still wins, but is clamped to what the window
+// can actually hold — an operator raising it past the budget would otherwise turn
+// every long interview into a hard error.
+const _budget = promptCharBudget(MAX_OUTPUT_TOKENS, { reserveChars: PROMPT_RESERVE_CHARS });
+const _requested = parseInt(process.env.L1_MAX_TRANSCRIPT_CHARS || '0', 10);
+const MAX_TRANSCRIPT_CHARS = _requested > 0 ? Math.min(_requested, _budget) : _budget;
+
+if (_requested > _budget) {
+  console.warn(`[L1Scoring] L1_MAX_TRANSCRIPT_CHARS=${_requested} exceeds what num_ctx=${NUM_CTX} ` +
+    `can hold (${_budget} chars) — clamped. Raise OLLAMA_NUM_CTX to score longer transcripts; ` +
+    `the model supports 40960.`);
+}
+console.log(`[L1Scoring] Transcript cap ${MAX_TRANSCRIPT_CHARS} chars (num_ctx=${NUM_CTX}, ` +
+  `num_predict=${MAX_OUTPUT_TOKENS}, reserve=${PROMPT_RESERVE_CHARS})`);
 
 // ─── System Prompts ──────────────────────────────────────────────────────────
 
@@ -103,7 +125,7 @@ function _buildScoringPrompt(jobId, jd, resumeText, transcript) {
     console.warn(`[L1Scoring] TRANSCRIPT TRUNCATED — ${droppedChars} of ${transcript.length} chars ` +
       `(${Math.round((droppedChars / transcript.length) * 100)}%) discarded at the ${MAX_TRANSCRIPT_CHARS}-char cap. ` +
       `Questions asked in the dropped tail are invisible to the scorer and will read as "never asked". ` +
-      `Raise OLLAMA_NUM_CTX and L1_MAX_TRANSCRIPT_CHARS together to score the full interview.`);
+      `The cap follows num_ctx automatically — raise OLLAMA_NUM_CTX (model supports 40960) to score the full interview.`);
   }
   const safeTranscript = droppedChars > 0
     ? transcript.substring(0, MAX_TRANSCRIPT_CHARS) + '\n[... transcript truncated ...]'
@@ -444,14 +466,29 @@ async function runL1Evaluation(input) {
       { role: 'system', content: L1_SCORING_SYSTEM_PROMPT },
       { role: 'user', content: scoringPrompt }
     ],
-    // 4000: each evidence item is now an object with quote + topic + follows_up
-    // rather than a bare string, across up to 8 items x 6 dimensions. Too low and
-    // Ollama stops mid-JSON with done_reason=length and the response fails to parse.
-    { temperature: SCORING_TEMPERATURE, maxTokens: 4000, think: false, seed: SCORING_SEED }
+    // MAX_OUTPUT_TOKENS (4000): each evidence item is now an object with quote + topic
+    // + follows_up rather than a bare string, across up to 8 items x 6 dimensions. Too
+    // low and Ollama stops mid-JSON with done_reason=length and the response fails to
+    // parse. It is the same constant the transcript cap is derived from, so the two
+    // halves of the context budget cannot drift apart again.
+    { temperature: SCORING_TEMPERATURE, maxTokens: MAX_OUTPUT_TOKENS, think: false, seed: SCORING_SEED }
   );
 
   const parsedScore = _parseJSON(llmResult.content);
-  if (!parsedScore) throw new Error('L1 scoring LLM returned invalid JSON');
+  if (!parsedScore) {
+    // "invalid JSON" alone sends the reader hunting through prompts. The cause is
+    // almost always done_reason=length — the evidence objects overran num_predict and
+    // the response stops mid-object — and that is distinguishable from a genuinely
+    // malformed reply only by reporting both.
+    const tail = String(llmResult.content || '').slice(-300);
+    throw new Error(
+      `L1 scoring LLM returned unparseable JSON (done_reason=${llmResult.doneReason}, ` +
+      `${llmResult.outputTokens} output tokens of ${MAX_OUTPUT_TOKENS} allowed). ` +
+      (llmResult.doneReason === 'length'
+        ? 'The response was CUT OFF mid-JSON — raise maxTokens or reduce evidence items per dimension. '
+        : '') +
+      `Response tail: ...${tail}`);
+  }
   // The score is derived from evidence, so a response carrying neither evidence key
   // would silently score 0.0 across the board and look like a catastrophic panel
   // rather than a malformed response. Fail loudly instead.
@@ -532,4 +569,14 @@ module.exports = {
   runL1Evaluation,
   L1_DIMENSIONS,
   MAX_L1_SCORE,
+  // Exported for scripts/test_context_budget.js, which builds a worst-case prompt and
+  // asserts it fits the window. PROMPT_RESERVE_CHARS is a measured number, and a
+  // measured number needs a test that re-measures it — a prompt edit that grows the
+  // template is otherwise invisible until a long transcript fails in production.
+  MAX_TRANSCRIPT_CHARS,
+  MAX_JD_CHARS,
+  MAX_RESUME_CHARS,
+  MAX_OUTPUT_TOKENS,
+  L1_SCORING_SYSTEM_PROMPT,
+  _buildScoringPrompt,
 };

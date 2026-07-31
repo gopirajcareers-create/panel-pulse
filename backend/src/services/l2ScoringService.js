@@ -20,7 +20,7 @@
 
 'use strict';
 
-const { callLLMWithMeta, callLLM } = require('./llmClient');
+const { callLLMWithMeta, callLLM, promptCharBudget, NUM_CTX } = require('./llmClient');
 const { normalizeTranscript, questionCountsBySpeaker, hasTurnLabels } = require('./transcriptNormalizer');
 const { scoreFromEvidence, coerceEvidenceItems } = require('./evidenceTierScoring');
 const { analyzeInterviewModeration } = require('./moderationService');
@@ -69,18 +69,50 @@ const MAX_L2_SCORE = Object.values(L2_DIMENSIONS).reduce((s, d) => s + d.max, 0)
 
 // ─── Input Limits ────────────────────────────────────────────────────────────
 //
-// Derived from the context budget — see l1ScoringService for the full derivation.
-// L2 is tighter than L1 because it carries TWO transcripts plus a larger output
-// budget (8 dimensions of evidence): 16384 - 4000 = 12384 tokens ≈ 37000 chars at
-// the observed ~3.0 chars/token, minus ~8500 overhead => ~28500 to split.
+// COMPUTED from the context window — see l1ScoringService for why these must not be
+// hand-derived literals. L2 is tighter than L1 because it carries TWO transcripts
+// against the same window and the same 8-dimension output budget.
 //
 // The L2 transcript is what is being scored, so it gets the larger share; L1 is
 // supporting context for one dimension (Resume Screening & Handoff). The old
 // 10000/8000 discarded 43% of a real 17k-char L2 interview.
-const MAX_L2_TRANSCRIPT_CHARS = parseInt(process.env.L2_MAX_TRANSCRIPT_CHARS || '18000', 10);
-const MAX_L1_CONTEXT_CHARS = parseInt(process.env.L2_MAX_L1_CONTEXT_CHARS || '10000', 10);
+const MAX_OUTPUT_TOKENS = 4000;
 const MAX_JD_CHARS = 3000;
 const MAX_RESUME_CHARS = 2000;
+
+// Non-transcript overhead: prompt template + system prompt + JSON skeleton, plus the JD
+// and resume caps. L2's template is larger than L1's (8 dimensions of skeleton) and
+// measures ~9600 chars. Set well above it because underestimating is a hard pre-flight
+// failure while overestimating only costs transcript tail.
+// scripts/test_context_budget.js re-measures and fails if the slack drops below ~750 tokens.
+const PROMPT_RESERVE_CHARS = 13000 + MAX_JD_CHARS + MAX_RESUME_CHARS;
+
+// 70/30 split of what is left. The L2 transcript is the object of scoring; L1 only has
+// to be long enough to tell whether L2 picked up L1's open threads.
+const L2_SHARE = 0.7;
+
+const _budget = promptCharBudget(MAX_OUTPUT_TOKENS, { reserveChars: PROMPT_RESERVE_CHARS });
+const _envInt = (name) => parseInt(process.env[name] || '0', 10);
+
+// Explicit overrides win but are clamped to their share of the real budget: an
+// operator raising one past the window would turn every long interview into a hard
+// error instead of a truncated one.
+function _cap(envName, share) {
+  const allowed = Math.floor(_budget * share);
+  const requested = _envInt(envName);
+  if (requested > allowed) {
+    console.warn(`[L2Scoring] ${envName}=${requested} exceeds its share of num_ctx=${NUM_CTX} ` +
+      `(${allowed} chars) — clamped. Raise OLLAMA_NUM_CTX; the model supports 40960.`);
+    return allowed;
+  }
+  return requested > 0 ? requested : allowed;
+}
+
+const MAX_L2_TRANSCRIPT_CHARS = _cap('L2_MAX_TRANSCRIPT_CHARS', L2_SHARE);
+const MAX_L1_CONTEXT_CHARS = _cap('L2_MAX_L1_CONTEXT_CHARS', 1 - L2_SHARE);
+
+console.log(`[L2Scoring] Transcript caps L2=${MAX_L2_TRANSCRIPT_CHARS} L1ctx=${MAX_L1_CONTEXT_CHARS} chars ` +
+  `(num_ctx=${NUM_CTX}, num_predict=${MAX_OUTPUT_TOKENS}, reserve=${PROMPT_RESERVE_CHARS})`);
 
 // ─── System Prompts ──────────────────────────────────────────────────────────
 
@@ -121,7 +153,7 @@ function _buildScoringPrompt(jobId, jd, resumeText, l1Transcript, l2Transcript) 
     console.warn(`[L2Scoring] TRANSCRIPT TRUNCATED — ${droppedL2} of ${l2Transcript.length} chars ` +
       `(${Math.round((droppedL2 / l2Transcript.length) * 100)}%) discarded at the ${MAX_L2_TRANSCRIPT_CHARS}-char cap. ` +
       `Questions in the dropped tail are invisible to the scorer and will read as "never asked". ` +
-      `Raise OLLAMA_NUM_CTX and L2_MAX_TRANSCRIPT_CHARS together to score the full interview.`);
+      `The cap follows num_ctx automatically — raise OLLAMA_NUM_CTX (model supports 40960) to score the full interview.`);
   }
   const safeL2Transcript = droppedL2 > 0
     ? l2Transcript.substring(0, MAX_L2_TRANSCRIPT_CHARS) + '\n[... transcript truncated ...]'
@@ -495,16 +527,27 @@ async function runL2Evaluation(input) {
       { role: 'system', content: L2_SCORING_SYSTEM_PROMPT },
       { role: 'user', content: scoringPrompt }
     ],
-    // 4000: 8 dimensions × up to 8 evidence items, each now an object with
-    // quote + topic + probes_depth + follows_up rather than a bare string. Too low
-    // and Ollama stops mid-JSON with done_reason=length and the response fails to
-    // parse. Not raised further because num_ctx is shared with two transcripts —
-    // see the Input Limits derivation above.
-    { temperature: SCORING_TEMPERATURE, maxTokens: 4000, think: false, seed: SCORING_SEED }
+    // MAX_OUTPUT_TOKENS (4000): 8 dimensions × up to 8 evidence items, each now an
+    // object with quote + topic + probes_depth + follows_up rather than a bare string.
+    // Too low and Ollama stops mid-JSON with done_reason=length and the response fails
+    // to parse. It is the same constant the transcript caps are derived from, so the
+    // two halves of the context budget cannot drift apart again.
+    { temperature: SCORING_TEMPERATURE, maxTokens: MAX_OUTPUT_TOKENS, think: false, seed: SCORING_SEED }
   );
 
   const parsedScore = _parseJSON(llmResult.content);
-  if (!parsedScore) throw new Error('L2 scoring LLM returned invalid JSON');
+  if (!parsedScore) {
+    // Same reasoning as L1: "invalid JSON" alone does not distinguish a response cut
+    // off at num_predict from a genuinely malformed one, and those have opposite fixes.
+    const tail = String(llmResult.content || '').slice(-300);
+    throw new Error(
+      `L2 scoring LLM returned unparseable JSON (done_reason=${llmResult.doneReason}, ` +
+      `${llmResult.outputTokens} output tokens of ${MAX_OUTPUT_TOKENS} allowed). ` +
+      (llmResult.doneReason === 'length'
+        ? 'The response was CUT OFF mid-JSON — raise maxTokens or reduce evidence items per dimension. '
+        : '') +
+      `Response tail: ...${tail}`);
+  }
   // The score is derived from evidence, so a response carrying neither evidence key
   // would silently score 0.0 across the board and look like a catastrophic panel
   // rather than a malformed response. Fail loudly instead.
@@ -600,4 +643,13 @@ module.exports = {
   // that lives here rather than in evidenceTierScoring, so it is the one piece that
   // the shared tier tests cannot reach; exercising it needs no LLM call.
   _deriveScores: _clampScores,
+  // Exported for scripts/test_context_budget.js — see the note on l1ScoringService's
+  // exports for why a measured reserve needs a test that re-measures it.
+  MAX_L2_TRANSCRIPT_CHARS,
+  MAX_L1_CONTEXT_CHARS,
+  MAX_JD_CHARS,
+  MAX_RESUME_CHARS,
+  MAX_OUTPUT_TOKENS,
+  L2_SCORING_SYSTEM_PROMPT,
+  _buildScoringPrompt,
 };

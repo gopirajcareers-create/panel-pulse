@@ -32,7 +32,13 @@ const https = require('https');
 
 const OLLAMA_BASE  = (process.env.OLLAMA_BASE_URL  || '').replace(/\/$/, '');
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL_NAME || 'qwen3:latest';
-const NUM_CTX      = parseInt(process.env.OLLAMA_NUM_CTX || '16384', 10);
+// 32768: real L1 interviews run to 36k+ chars, and at 16384 the transcript cap landed
+// at ~25600 chars — a 36085-char interview lost 29% of its tail, which reads to the
+// scorer as questions the panel never asked. Measured on the on-prem host (10.10.160.51,
+// qwen3 8.2B Q4_K_M): 40960 loads fully into VRAM at 9.22 GB with no CPU offload, so
+// 32768 is comfortably within reach and leaves room for a second resident model.
+// The model's own maximum is 40960; going past it makes Ollama silently clamp.
+const NUM_CTX      = parseInt(process.env.OLLAMA_NUM_CTX || '32768', 10);
 const TIMEOUT_MS   = parseInt(process.env.OLLAMA_TIMEOUT_MS || '180000', 10);
 
 // ── Retry policy ──
@@ -55,6 +61,32 @@ const HEALTH_TTL_MS = parseInt(process.env.OLLAMA_HEALTH_TTL_MS || '15000', 10);
 
 // Conservative estimate for mixed English prose + JSON scaffolding.
 const CHARS_PER_TOKEN = 3.2;
+
+/**
+ * How many prompt CHARACTERS fit alongside a given output budget.
+ *
+ * Exported so callers size their own truncation caps against the real context
+ * window instead of hard-coding a number derived from it by hand. Those two used to
+ * be independent constants and silently disagreed: raising num_predict from 3000 to
+ * 4000 for the tier-scoring evidence objects shrank the input budget by 1000 tokens,
+ * but the 28000-char transcript cap stayed put, so a 36k-char transcript failed
+ * pre-flight with "~12653 estimated tokens but only 12384 available" — a hard error
+ * on a real interview, from a change made elsewhere in the file.
+ *
+ * @param {number} maxTokens — the num_predict the caller will request
+ * @param {object} [opts]
+ * @param {number} [opts.numCtx=NUM_CTX]
+ * @param {number} [opts.reserveChars=0] — prompt template, system prompt, JSON
+ *        skeleton: everything the caller sends that is not the truncated payload.
+ * @returns {number} characters available for payload, never negative
+ */
+function promptCharBudget(maxTokens, { numCtx = NUM_CTX, reserveChars = 0 } = {}) {
+  const tokenBudget = numCtx - maxTokens;
+  // Match _estimateTokens' rounding direction so a cap computed here cannot produce
+  // an estimate that trips the pre-flight guard below.
+  const chars = Math.floor(tokenBudget * CHARS_PER_TOKEN) - reserveChars;
+  return Math.max(0, chars);
+}
 
 const CONN_ERRORS = ['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'ECONNABORTED', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN'];
 
@@ -507,9 +539,11 @@ module.exports = {
   callLLMWithMeta,
   checkOllamaHealth,
   resolveModelIdentity,
+  promptCharBudget,
   getProvider: _getProvider,
   PROVIDER: _getProvider(),
   OLLAMA_MODEL,
   NUM_CTX,
+  CHARS_PER_TOKEN,
   MAX_ATTEMPTS,
 };

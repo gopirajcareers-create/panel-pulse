@@ -20,6 +20,31 @@ changes what "2 evidences" is worth, these should be the first thing that fails.
 
 ---
 
+### test_context_budget.js
+
+**Purpose:** Prove a worst-case scoring prompt still fits the context window. No
+database or model — it builds the real prompts with every input at its cap and checks
+the estimate against the same budget `llmClient`'s pre-flight guard uses.
+
+```bash
+cd backend
+node scripts/test_context_budget.js
+```
+
+That guard has already fired on a real interview. The transcript cap used to be a
+literal `28000`, hand-derived from `num_ctx` and `num_predict`; when `num_predict` rose
+3000 → 4000 for the tier-scoring evidence objects, the input budget shrank by 1000
+tokens, the literal did not move, and a 36085-char transcript failed outright with
+*"~12653 estimated tokens but only 12384 available"*. The caps are computed from
+`promptCharBudget()` now, but they are computed from a **measured** overhead constant
+(`PROMPT_RESERVE_CHARS`) that goes stale the moment someone adds a paragraph to a system
+prompt. This re-measures on every run.
+
+**Run it after editing any scoring prompt, any JSON skeleton, or `maxTokens`.** It is
+fast and needs no infrastructure, so there is no reason not to.
+
+---
+
 ### rescore.js
 
 **Purpose:** Re-score one stored evaluation and diff it against the score on record.
