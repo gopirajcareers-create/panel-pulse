@@ -9,7 +9,10 @@
  *
  * A failed Ollama call is therefore a HARD ERROR, never a quiet downgrade.
  *
- * Determinism: pass `seed` (and temperature 0) for reproducible scoring.
+ * Determinism: pass `seed` (and temperature 0) for reproducible scoring. Seed and
+ * temperature alone are NOT sufficient — the first generation after a model load
+ * diverges from every later one, so seeded calls are preceded by a throwaway
+ * warm-up generation. See _ensureWarm for the measurement.
  * Context safety: num_ctx is always set explicitly. Ollama silently drops the
  * FRONT of an over-long prompt (JD / resume / transcript context) rather than
  * erroring, so we pre-flight the token estimate and refuse instead.
@@ -38,6 +41,12 @@ const RETRY_BASE_MS   = parseInt(process.env.OLLAMA_RETRY_BASE_MS || '2000', 10)
 // Ceiling on ALL attempts combined. Must stay under the frontend's polling
 // window (150 polls x 4s = 600s) or the browser gives up before we do.
 const RETRY_BUDGET_MS = parseInt(process.env.OLLAMA_RETRY_BUDGET_MS || '480000', 10);
+
+// ── Cold-start warm-up ──
+// Spends one throwaway generation so a seeded call is never the first after a model
+// load — see _ensureWarm for the measurement behind this. Escape hatch only; leaving
+// it off makes scores depend on whether the model happened to be loaded.
+const WARMUP_ENABLED = process.env.OLLAMA_WARMUP !== 'false';
 
 // ── Health probe ──
 const HEALTH_TIMEOUT_MS = parseInt(process.env.OLLAMA_HEALTH_TIMEOUT_MS || '4000', 10);
@@ -255,6 +264,91 @@ async function checkOllamaHealth({ force = false } = {}) {
 }
 
 /**
+ * Ensure the model has already generated at least once at this num_ctx before a
+ * seeded call runs.
+ *
+ * ── Why ──────────────────────────────────────────────────────────────────────
+ * The FIRST generation after a model load is not reproducible, even at
+ * temperature 0 with a fixed seed. Measured directly against /api/chat on
+ * qwen3:latest with an identical ~3200-token prompt: the first response after a
+ * load returned eval_count=1443 and one body, every subsequent response
+ * eval_count=1484 and a different, thereafter stable body.
+ *
+ * That surfaced as a real scoring change, not a curiosity: the same stored L2
+ * record scored 8.0 on a cold model and 9.0 on a warm one, because the cold run
+ * reported fewer evidence items and two dimensions dropped a tier. Whether a
+ * panel scores 8 or 9 must not depend on whether they were the first submission
+ * after a VM restart.
+ *
+ * A throwaway generation absorbs the anomaly, so the scoring call always runs in
+ * the stable regime.
+ *
+ * The warm-up runs UNCONDITIONALLY, even when /api/ps already reports the model
+ * loaded. Skipping it when loaded was tried and was not enough: L1 then scored 8.8
+ * cold and 9.0 warm on the same record, because what matters is not merely "has it
+ * generated once" but that the same fixed prompt immediately precedes the scoring
+ * call every time. Always prepending the identical warm-up prompt makes the
+ * preceding state identical in both cases, which is what actually made cold and
+ * warm agree. The /api/ps probe is kept only to log WHY a warm-up was needed.
+ *
+ * num_ctx MUST match the real call: Ollama reloads the model when it changes,
+ * which would put the scoring call right back in the cold slot it just paid to
+ * avoid.
+ *
+ * Cost is one ~8-token generation per seeded call, against a scoring call of
+ * several thousand — cheap next to a score that moves by a full point.
+ *
+ * Best-effort throughout — a failed warm-up is logged and never fatal, since a
+ * possibly-nondeterministic score beats no score at all. It also cannot be
+ * airtight: another client can trigger a reload between the warm-up and the call.
+ * It removes the systematic cold-start divergence, not every theoretical race.
+ *
+ * @param {number} numCtx — the context size the real call will use
+ * @returns {Promise<{warmed: boolean, reason: string}>}
+ */
+async function _ensureWarm(numCtx) {
+  try {
+    const ps = await _controlRequest('/api/ps');
+    const base = OLLAMA_MODEL.split(':')[0];
+    const loaded = (ps.models || []).find(m => {
+      const name = String(m.name || m.model || '');
+      return name === OLLAMA_MODEL || name.split(':')[0] === base;
+    });
+
+    const why = !loaded
+      ? 'model not loaded'
+      : (loaded.context_length && loaded.context_length !== numCtx
+        ? `loaded at num_ctx=${loaded.context_length}, need ${numCtx}`
+        : 'already loaded');
+
+    console.log(`🔥 Warming ${OLLAMA_MODEL} at num_ctx=${numCtx} (${why}) — a fixed throwaway ` +
+      `generation runs before every seeded call so the preceding state is identical each time.`);
+
+    await axios.post(
+      `${OLLAMA_BASE}/api/chat`,
+      {
+        model: OLLAMA_MODEL,
+        messages: [{ role: 'user', content: 'Reply with the single word: ready' }],
+        stream: false,
+        think: false,
+        // Same num_ctx as the real call, or this warm-up causes the very reload it
+        // exists to get ahead of. num_predict stays tiny: only the load and the
+        // first generation matter, not what it says.
+        options: { temperature: 0, num_predict: 8, num_ctx: numCtx },
+      },
+      { headers: { 'Content-Type': 'application/json' }, timeout: TIMEOUT_MS }
+    );
+    return { warmed: true, reason: why };
+  } catch (err) {
+    // Never fatal: the real call is about to run anyway and will report its own
+    // failure with far better context than this probe can.
+    console.warn(`⚠️  Warm-up failed (${err.message}) — proceeding, but this score may ` +
+      `differ from a warm-model run of the same input.`);
+    return { warmed: false, reason: `failed: ${err.message}` };
+  }
+}
+
+/**
  * Call Ollama and return the response text plus run metadata.
  *
  * @param {Array<{role:string, content:string}>} messages
@@ -267,7 +361,8 @@ async function checkOllamaHealth({ force = false } = {}) {
  * @returns {Promise<{content:string, provider:string, model:string, modelDigest:string|null,
  *                    modelParameterSize:string|null, modelQuantization:string|null,
  *                    modelContextLength:number|null, seed:number|undefined, numCtx:number,
- *                    promptTokens:number, outputTokens:number, doneReason:string, attempts:number}>}
+ *                    promptTokens:number, outputTokens:number, doneReason:string, attempts:number,
+ *                    warmedUp:boolean, warmupNote:string}>}
  */
 async function callLLMWithMeta(messages, {
   temperature = 0.2, maxTokens = 2000, think = true, seed, numCtx = NUM_CTX,
@@ -296,6 +391,14 @@ async function callLLMWithMeta(messages, {
   const identityPromise = resolveModelIdentity().catch(() => ({
     digest: null, parameterSize: null, quantization: null, family: null, contextLength: null,
   }));
+
+  // A seeded call is a promise of reproducibility, and the first generation after a
+  // model load breaks that promise — see _ensureWarm. Only seeded callers pay the
+  // warm-up cost; an unseeded call is not reproducible regardless, so making it
+  // wait would buy nothing.
+  const warmth = seed !== undefined && WARMUP_ENABLED
+    ? await _ensureWarm(numCtx)
+    : { warmed: false, reason: seed === undefined ? 'unseeded call' : 'warm-up disabled' };
 
   // ── Bounded retry: the on-prem host restarts, and a cold model can 500 while
   //    it pages in. Safe to retry because seed + temperature 0 make this call
@@ -383,6 +486,11 @@ async function callLLMWithMeta(messages, {
     outputTokens: data.eval_count,
     doneReason: data.done_reason,
     attempts: attempt,
+    // Whether this call was preceded by a warm-up. Persisted with scores because a
+    // run where warm-up FAILED may not be reproducible, and that is worth knowing
+    // when two supposedly identical scores disagree.
+    warmedUp: warmth.warmed,
+    warmupNote: warmth.reason,
   };
 }
 
