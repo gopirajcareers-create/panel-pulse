@@ -2,6 +2,67 @@
 
 This directory contains utility scripts for database maintenance and backfilling operations.
 
+## Scoring Scripts
+
+### test_evidence_tiers.js / test_l2_tiers.js
+
+**Purpose:** Pin the evidence-tier rubric. No database or model needed — pure functions
+over fixtures, so they run in about a second.
+
+```bash
+cd backend
+node scripts/test_evidence_tiers.js   # shared tier ladder, topic dedup, depth detection
+node scripts/test_l2_tiers.js         # L2's 8 dimensions, coarse grids, handoff cap
+```
+
+The tier boundaries are a product decision, not an implementation detail. If someone
+changes what "2 evidences" is worth, these should be the first thing that fails.
+
+---
+
+### rescore.js
+
+**Purpose:** Re-score one stored evaluation and diff it against the score on record.
+**Read-only unless you pass `--write`**, so a rubric change can be measured before
+anything is persisted.
+
+```bash
+node scripts/rescore.js --job JD1005 --candidate Mathews --audit
+node scripts/rescore.js --job JD1005 --candidate Mathews --stage l2 --write
+```
+
+- `--stage l1|l2` (default `l1`)
+- `--audit` prints how each score was derived: the counted topics, depth-probing
+  subjects, follow-up chains, and the reason full marks were withheld.
+- `--write` persists to `stage2.evaluation` / `stage3.evaluation`.
+
+Use `--audit` when a panel disputes a score: it shows the exact quotes each dimension
+was counted from, so the number can be recomputed by hand.
+
+---
+
+### verify_determinism.js
+
+**Purpose:** Prove identical input still produces an identical score. Calls the real
+model against a real stored record; writes nothing.
+
+```bash
+node scripts/verify_determinism.js              # L1 and L2, cold + warm
+node scripts/verify_determinism.js --stage l2
+```
+
+It **unloads the model** between runs on purpose. Seed and temperature 0 are not
+sufficient by themselves: the first generation after a model load diverges from every
+later one, which moved a real L2 record between 8.0 and 9.0 depending only on whether
+the model happened to already be resident. `llmClient` warms the model before every
+seeded call to remove that, and this is what verifies it end to end.
+
+Run it after any change to a scoring prompt, to `llmClient`, or after the Ollama host
+is upgraded or restarted. Takes several minutes — it deliberately pays cold-start cost
+multiple times.
+
+---
+
 ## Moderation Data Scripts
 
 ### check-moderation-status.js

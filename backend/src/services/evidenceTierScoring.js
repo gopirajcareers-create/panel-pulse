@@ -278,6 +278,39 @@ function deriveTier(units, { chains = 0, depthTopics = 0 } = {}) {
 }
 
 /**
+ * Coerce whatever the model returned for a dimension into evidence items.
+ *
+ * Shared by L1 and L2 so the two cannot drift: a field dropped here silently
+ * changes a score, and the earlier per-service copy dropped `probes_depth`, which
+ * meant a genuine depth question phrased without a how/why keyword ("Tell me more
+ * about that trade-off") was never counted as depth despite the model flagging it.
+ *
+ * Accepts the tagged object form and the older bare-string form, because stored
+ * transcripts get re-scored and an older model response must not crash the run.
+ * A bare string becomes an untagged item, which still counts once toward breadth.
+ *
+ * @param {Array<object|string>} raw
+ * @returns {Array<{quote:string, topic:string, probes_depth:boolean, follows_up:boolean}>}
+ */
+function coerceEvidenceItems(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(item => {
+    if (typeof item === 'string') {
+      return { quote: item.trim(), topic: '', probes_depth: false, follows_up: false };
+    }
+    if (item && typeof item === 'object') {
+      return {
+        quote: String(item.quote ?? item.text ?? '').trim(),
+        topic: String(item.topic ?? '').trim(),
+        probes_depth: item.probes_depth === true,
+        follows_up: item.follows_up === true,
+      };
+    }
+    return null;
+  }).filter(it => it && it.quote);
+}
+
+/**
  * Score every dimension from its tagged evidence.
  *
  * @param {object} args
@@ -340,6 +373,7 @@ function scoreFromEvidence({ dimensions, evidenceDetail, depthClaims = {}, model
 
 module.exports = {
   scoreFromEvidence,
+  coerceEvidenceItems,
   deriveTier,
   looksDepthProbing,
   tierToStep,

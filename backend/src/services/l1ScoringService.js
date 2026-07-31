@@ -20,7 +20,7 @@
 
 const { callLLMWithMeta, callLLM } = require('./llmClient');
 const { normalizeTranscript, questionCountsBySpeaker, hasTurnLabels } = require('./transcriptNormalizer');
-const { scoreFromEvidence } = require('./evidenceTierScoring');
+const { scoreFromEvidence, coerceEvidenceItems } = require('./evidenceTierScoring');
 const { analyzeInterviewModeration } = require('./moderationService');
 
 // ─── Determinism ─────────────────────────────────────────────────────────────
@@ -264,28 +264,6 @@ function _parseJSON(text) {
 // place and there is nothing to snap.
 
 /**
- * Coerce whatever the model returned for a dimension into evidence items.
- *
- * Accepts the tagged object form and the older bare-string form, because stored
- * transcripts get re-scored and an older model response must not crash the run.
- * A bare string becomes an untagged item, which still counts once toward breadth.
- */
-function _coerceEvidenceItems(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw.map(item => {
-    if (typeof item === 'string') return { quote: item.trim(), topic: '', follows_up: false };
-    if (item && typeof item === 'object') {
-      return {
-        quote: String(item.quote ?? item.text ?? '').trim(),
-        topic: String(item.topic ?? '').trim(),
-        follows_up: item.follows_up === true,
-      };
-    }
-    return null;
-  }).filter(it => it && it.quote);
-}
-
-/**
  * Derive every dimension score from the reported evidence.
  *
  * The model no longer picks the numbers — see evidenceTierScoring for why. It is
@@ -299,7 +277,7 @@ function _clampScores(parsed) {
   const evidenceDetail = {};
   const emptyDims = [];
   for (const dim of Object.keys(L1_DIMENSIONS)) {
-    const items = _coerceEvidenceItems(
+    const items = coerceEvidenceItems(
       parsed.evidence_detail?.[dim] ?? parsed.evidence?.[dim]
     );
     evidenceDetail[dim] = items;
@@ -521,6 +499,10 @@ async function runL1Evaluation(input) {
     prompt_tokens: llmResult.promptTokens,
     output_tokens: llmResult.outputTokens,
     done_reason: llmResult.doneReason,
+    // See l2ScoringService: seed + temperature 0 alone do not make a score
+    // reproducible, because the first generation after a model load diverges.
+    warmed_up: llmResult.warmedUp,
+    warmup_note: llmResult.warmupNote,
     transcript_chars: transcript.length,
     // Persisted so an audit can tell a low score caused by a weak panel from one
     // caused by an unscored tail, without re-deriving the cap from code history.
