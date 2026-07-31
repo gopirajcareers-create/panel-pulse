@@ -42,6 +42,24 @@ const L1_DIMENSIONS = {
 
 const MAX_L1_SCORE = Object.values(L1_DIMENSIONS).reduce((s, d) => s + d.max, 0); // 10.0
 
+// ─── Input Limits ────────────────────────────────────────────────────────────
+//
+// Derived from the context budget, not picked by feel. The old 12000 discarded
+// 67% of a real 36k-char interview (JD45/SATHISH) — every question in the back
+// two-thirds was invisible to the scorer, which is indistinguishable from a panel
+// that never asked them.
+//
+// Budget at num_ctx=16384 and num_predict=3000: 13384 tokens. At the observed
+// ~3.0 chars/token (worse than llmClient's 3.2 estimate, measured on real
+// transcripts) that is ~40000 chars, minus ~8500 for instructions + JD + resume
+// + the JSON skeleton => ~31500 available. 28000 leaves deliberate slack, since
+// exceeding the budget is a hard failure at llmClient's pre-flight guard.
+//
+// Raise OLLAMA_NUM_CTX (the model supports 40960) before raising this further.
+const MAX_TRANSCRIPT_CHARS = parseInt(process.env.L1_MAX_TRANSCRIPT_CHARS || '28000', 10);
+const MAX_JD_CHARS = 3000;
+const MAX_RESUME_CHARS = 2000;
+
 // ─── System Prompts ──────────────────────────────────────────────────────────
 
 const L1_SCORING_SYSTEM_PROMPT = `You are a senior HR quality-assurance expert with 15+ years of technical interview assessment experience.
@@ -71,9 +89,17 @@ CRITICAL RULES:
  * @param {string} transcript — L1 interview transcript
  */
 function _buildScoringPrompt(jobId, jd, resumeText, transcript) {
-  const MAX_CHARS = 12000;
-  const safeTranscript = transcript.length > MAX_CHARS
-    ? transcript.substring(0, MAX_CHARS) + '\n[... transcript truncated ...]'
+  // Truncation is loud: a score computed from a partial interview must never look
+  // like a score computed from the whole one.
+  const droppedChars = Math.max(0, transcript.length - MAX_TRANSCRIPT_CHARS);
+  if (droppedChars > 0) {
+    console.warn(`[L1Scoring] TRANSCRIPT TRUNCATED — ${droppedChars} of ${transcript.length} chars ` +
+      `(${Math.round((droppedChars / transcript.length) * 100)}%) discarded at the ${MAX_TRANSCRIPT_CHARS}-char cap. ` +
+      `Questions asked in the dropped tail are invisible to the scorer and will read as "never asked". ` +
+      `Raise OLLAMA_NUM_CTX and L1_MAX_TRANSCRIPT_CHARS together to score the full interview.`);
+  }
+  const safeTranscript = droppedChars > 0
+    ? transcript.substring(0, MAX_TRANSCRIPT_CHARS) + '\n[... transcript truncated ...]'
     : transcript;
 
   const dimensionTable = Object.entries(L1_DIMENSIONS)
@@ -94,10 +120,10 @@ You are NOT scoring the candidate — you are scoring how well the PANELIST cove
 ${jobId}
 
 === JOB DESCRIPTION ===
-${jd.substring(0, 3000)}
+${jd.substring(0, MAX_JD_CHARS)}
 
 === CANDIDATE RESUME (from Stage 1 screening) ===
-${resumeText ? resumeText.substring(0, 2000) : 'Resume not available.'}
+${resumeText ? resumeText.substring(0, MAX_RESUME_CHARS) : 'Resume not available.'}
 
 === L1 INTERVIEW TRANSCRIPT ===
 ${safeTranscript}
@@ -388,7 +414,11 @@ async function runL1Evaluation(input) {
     output_tokens: llmResult.outputTokens,
     done_reason: llmResult.doneReason,
     transcript_chars: transcript.length,
-    rubric_version: 'l1-v2-grid',
+    // Persisted so an audit can tell a low score caused by a weak panel from one
+    // caused by an unscored tail, without re-deriving the cap from code history.
+    transcript_chars_scored: Math.min(transcript.length, MAX_TRANSCRIPT_CHARS),
+    transcript_chars_dropped: Math.max(0, transcript.length - MAX_TRANSCRIPT_CHARS),
+    rubric_version: 'l1-v3-fullctx',
   };
 
   console.log(`[L1Scoring] Evaluation complete — jobId=${jobId}`);

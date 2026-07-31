@@ -51,6 +51,21 @@ const L2_DIMENSIONS = {
 
 const MAX_L2_SCORE = Object.values(L2_DIMENSIONS).reduce((s, d) => s + d.max, 0); // 10.0
 
+// ─── Input Limits ────────────────────────────────────────────────────────────
+//
+// Derived from the context budget — see l1ScoringService for the full derivation.
+// L2 is tighter than L1 because it carries TWO transcripts plus a larger output
+// budget (8 dimensions of evidence): 16384 - 4000 = 12384 tokens ≈ 37000 chars at
+// the observed ~3.0 chars/token, minus ~8500 overhead => ~28500 to split.
+//
+// The L2 transcript is what is being scored, so it gets the larger share; L1 is
+// supporting context for one dimension (Resume Screening & Handoff). The old
+// 10000/8000 discarded 43% of a real 17k-char L2 interview.
+const MAX_L2_TRANSCRIPT_CHARS = parseInt(process.env.L2_MAX_TRANSCRIPT_CHARS || '18000', 10);
+const MAX_L1_CONTEXT_CHARS = parseInt(process.env.L2_MAX_L1_CONTEXT_CHARS || '10000', 10);
+const MAX_JD_CHARS = 3000;
+const MAX_RESUME_CHARS = 2000;
+
 // ─── System Prompts ──────────────────────────────────────────────────────────
 
 const L2_SCORING_SYSTEM_PROMPT = `You are a senior HR quality-assurance expert with 15+ years of technical interview assessment experience.
@@ -83,21 +98,28 @@ CRITICAL RULES:
  * for an identical transcript). See L2_SCORING_SYSTEM_PROMPT rule 7.
  */
 function _buildScoringPrompt(jobId, jd, resumeText, l1Transcript, l2Transcript) {
-  const MAX_CHARS = 10000;
-  const safeL2Transcript = l2Transcript.length > MAX_CHARS
-    ? l2Transcript.substring(0, MAX_CHARS) + '\n[... transcript truncated ...]'
+  // Truncation is loud: a score from a partial interview must never look like a
+  // score from the whole one.
+  const droppedL2 = Math.max(0, l2Transcript.length - MAX_L2_TRANSCRIPT_CHARS);
+  if (droppedL2 > 0) {
+    console.warn(`[L2Scoring] TRANSCRIPT TRUNCATED — ${droppedL2} of ${l2Transcript.length} chars ` +
+      `(${Math.round((droppedL2 / l2Transcript.length) * 100)}%) discarded at the ${MAX_L2_TRANSCRIPT_CHARS}-char cap. ` +
+      `Questions in the dropped tail are invisible to the scorer and will read as "never asked". ` +
+      `Raise OLLAMA_NUM_CTX and L2_MAX_TRANSCRIPT_CHARS together to score the full interview.`);
+  }
+  const safeL2Transcript = droppedL2 > 0
+    ? l2Transcript.substring(0, MAX_L2_TRANSCRIPT_CHARS) + '\n[... transcript truncated ...]'
     : l2Transcript;
 
   // L1 context materially drives the "Resume Screening & Handoff" dimension.
   // When it is absent the model has nothing to check handoff against and inflates
   // the score by ~1.2 pts, so the absence is stated LOUDLY rather than implied by
   // a bare "Not available." line the model can gloss over.
-  const L1_MAX_CHARS = 8000;
   const hasL1 = Boolean(l1Transcript && l1Transcript.trim());
   const safeL1Transcript = !hasL1
     ? 'NOT AVAILABLE — the L1 interview transcript was not supplied for this candidate.'
-    : (l1Transcript.length > L1_MAX_CHARS
-      ? l1Transcript.substring(0, L1_MAX_CHARS) + '\n[... L1 transcript truncated ...]'
+    : (l1Transcript.length > MAX_L1_CONTEXT_CHARS
+      ? l1Transcript.substring(0, MAX_L1_CONTEXT_CHARS) + '\n[... L1 transcript truncated ...]'
       : l1Transcript);
 
   const l1Guidance = hasL1
@@ -124,10 +146,10 @@ You are NOT scoring the candidate — you are scoring how well the L2 PANELIST c
 ${jobId}
 
 === JOB DESCRIPTION ===
-${jd.substring(0, 3000)}
+${jd.substring(0, MAX_JD_CHARS)}
 
 === CANDIDATE RESUME (from Stage 1 screening) ===
-${resumeText ? resumeText.substring(0, 2000) : 'Resume not available.'}
+${resumeText ? resumeText.substring(0, MAX_RESUME_CHARS) : 'Resume not available.'}
 
 === L1 INTERVIEW TRANSCRIPT CONTEXT (for Handoff evaluation) ===
 ${safeL1Transcript}
@@ -456,7 +478,12 @@ async function runL2Evaluation(input) {
     l1_context_available: hasL1,
     l1_transcript_chars: l1Transcript.length,
     l2_transcript_chars: l2Transcript.length,
-    rubric_version: 'l2-v2-grid',
+    // Persisted so an audit can tell a low score caused by a weak panel from one
+    // caused by an unscored tail, without re-deriving the cap from code history.
+    l2_transcript_chars_scored: Math.min(l2Transcript.length, MAX_L2_TRANSCRIPT_CHARS),
+    l2_transcript_chars_dropped: Math.max(0, l2Transcript.length - MAX_L2_TRANSCRIPT_CHARS),
+    l1_context_chars_dropped: Math.max(0, l1Transcript.length - MAX_L1_CONTEXT_CHARS),
+    rubric_version: 'l2-v3-fullctx',
   };
 
   console.log(`[L2Scoring] Evaluation complete — jobId=${jobId}`);
