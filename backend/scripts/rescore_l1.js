@@ -66,9 +66,12 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
   console.log('\nRe-scoring...');
   const startedAt = Date.now();
-  const fresh = await runL1Evaluation({
+  // runL1Evaluation returns { success, evaluation, moderation } — the score object
+  // is nested under .evaluation, matching how it is persisted.
+  const result = await runL1Evaluation({
     jobId: doc.jobId, candidateName: doc.candidateName, jd, resumeText, transcript,
   });
+  const fresh = result.evaluation;
   console.log(`Done in ${Math.round((Date.now() - startedAt) / 1000)}s\n`);
 
   const dims = new Set([
@@ -90,8 +93,13 @@ const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       delta.padStart(6) + `    ${evOld} -> ${ev} quote(s)`);
   }
   console.log('-'.repeat(80));
-  console.log('TOTAL'.padEnd(34) + String(old.overall_score ?? '-').padStart(7) +
-    String(fresh.overall_score ?? '-').padStart(7));
+  const dTotal = (typeof old.score === 'number' && typeof fresh.score === 'number')
+    ? (fresh.score - old.score > 0 ? `+${(fresh.score - old.score).toFixed(1)}` : (fresh.score - old.score).toFixed(1))
+    : '?';
+  console.log('TOTAL'.padEnd(34) + String(old.score ?? '-').padStart(7) +
+    String(fresh.score ?? '-').padStart(7) + dTotal.padStart(6));
+  console.log('CATEGORY'.padEnd(34) + String(old.score_category ?? '-').padStart(7) +
+    String(fresh.score_category ?? '-').padStart(7));
 
   const m = fresh.scoring_meta || {};
   console.log(`\nNormalisation: ${m.transcript_breaks_inserted} turn boundaries inserted`);
