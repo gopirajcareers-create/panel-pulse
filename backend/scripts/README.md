@@ -45,6 +45,33 @@ fast and needs no infrastructure, so there is no reason not to.
 
 ---
 
+### test_json_repair.js
+
+**Purpose:** Pin the JSON repair layer (`src/services/jsonRepair.js`) that both scoring
+services parse model responses through. No database or model — fixtures only.
+
+```bash
+cd backend
+node scripts/test_json_repair.js
+```
+
+The scoring prompts ask the model to quote the transcript **verbatim** inside JSON
+strings, so a panelist who says *the "N+1 problem"* produces an evidence string
+containing a raw double quote — and an 8B model escapes it only most of the time. When it
+doesn't, the string ends early and the response fails to parse with `done_reason=stop`
+and a tail that *looks* complete. That failed a whole real evaluation. Since scoring pins
+`seed` and `temperature: 0`, a retry returns byte-identical broken output, so repair —
+not retry — is the only recovery.
+
+The important cases here are the **negative** ones: repair must never turn a valid
+response into a *different* valid response, and a truncated response must still fail
+rather than be silently completed. A repair that quietly changes correct output is worse
+than a failed parse, because it scores.
+
+**Run it after touching `jsonRepair.js` or either scoring prompt's rule 2.**
+
+---
+
 ### rescore.js
 
 **Purpose:** Re-score one stored evaluation and diff it against the score on record.

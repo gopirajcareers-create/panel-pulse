@@ -19,6 +19,7 @@
 'use strict';
 
 const { callLLMWithMeta, callLLM, promptCharBudget, NUM_CTX } = require('./llmClient');
+const { parseLLMJSON } = require('./jsonRepair');
 const { normalizeTranscript, questionCountsBySpeaker, hasTurnLabels } = require('./transcriptNormalizer');
 const { scoreFromEvidence, coerceEvidenceItems } = require('./evidenceTierScoring');
 const { analyzeInterviewModeration } = require('./moderationService');
@@ -96,7 +97,12 @@ You are judging the PANEL's performance — not the candidate's.
 
 CRITICAL RULES:
 1. Return ONLY a valid JSON object. No markdown, no explanation, no preamble.
-2. All string values must be JSON-safe (no raw newlines).
+2. All string values must be JSON-safe: no raw newlines, and any double quote INSIDE a
+   quoted value must be escaped with a backslash. Transcript lines often contain quoted
+   phrases, so a panelist asking about the "N+1 problem" must be reported as
+   "asked about the \\"N+1 problem\\"" — NOT as "asked about the "N+1 problem"", which
+   ends the string early and makes the whole response unparseable.
+   Prefer rewording to avoid inner quotes entirely.
 3. Evidence MUST only quote lines spoken by the INTERVIEWER / PANEL — never the candidate.
 4. You do NOT choose the numeric scores. They are computed from the evidence you
    report, so your task is to report that evidence completely and accurately.
@@ -252,32 +258,11 @@ evidence_detail and depth_demonstrated, even when the array is empty.
 }`;
 }
 
-// ─── JSON Parser ─────────────────────────────────────────────────────────────
-
-function _parseJSON(text) {
-  const str = String(text || '');
-  // Try markdown code block first
-  const block = str.match(/```json\s*([\s\S]*?)```/i);
-  if (block) {
-    try { return JSON.parse(block[1].trim()); } catch (_) { /* fall through */ }
-  }
-  // Balanced brace scan
-  const start = str.indexOf('{');
-  if (start === -1) return null;
-  let depth = 0, inStr = false, esc = false, end = -1;
-  for (let i = start; i < str.length; i++) {
-    const ch = str[i];
-    if (esc) { esc = false; continue; }
-    if (ch === '\\') { esc = true; continue; }
-    if (ch === '"') { inStr = !inStr; continue; }
-    if (!inStr) {
-      if (ch === '{') depth++;
-      else if (ch === '}') { depth--; if (depth === 0) { end = i; break; } }
-    }
-  }
-  if (end === -1) return null;
-  try { return JSON.parse(str.slice(start, end + 1)); } catch (_) { return null; }
-}
+// ─── JSON Parsing ────────────────────────────────────────────────────────────
+// Lives in jsonRepair.js, shared with L2. It does more than JSON.parse because
+// this prompt asks the model to quote the transcript verbatim inside JSON strings: a
+// panelist who says  the "N+1 problem"  yields a string with a raw double quote, which an
+// 8B model escapes only most of the time. See jsonRepair.js for why retrying cannot help.
 
 // ─── Derive Scores From Evidence ──────────────────────────────────────────────
 //
@@ -474,12 +459,18 @@ async function runL1Evaluation(input) {
     { temperature: SCORING_TEMPERATURE, maxTokens: MAX_OUTPUT_TOKENS, think: false, seed: SCORING_SEED }
   );
 
-  const parsedScore = _parseJSON(llmResult.content);
+  const parsed = parseLLMJSON(llmResult.content);
+  const parsedScore = parsed.value;
+  // A repair that succeeds silently hides a prompt that has begun drifting, so say so.
+  if (parsedScore && parsed.method !== 'brace-scan' && parsed.method !== 'markdown-block') {
+    console.warn(`[L1Scoring] Response needed JSON repair (${parsed.method}) — the model emitted ` +
+      `slightly invalid JSON. Scoring continued on the repaired object.`);
+  }
   if (!parsedScore) {
-    // "invalid JSON" alone sends the reader hunting through prompts. The cause is
-    // almost always done_reason=length — the evidence objects overran num_predict and
-    // the response stops mid-object — and that is distinguishable from a genuinely
-    // malformed reply only by reporting both.
+    // Three different faults arrive as "unparseable", with three different fixes:
+    // done_reason=length means the evidence objects overran num_predict; a syntax error
+    // at a position means the model broke its own JSON; no '{' at all means it answered
+    // in prose. Only reporting the parse error and the tail together tells them apart.
     const tail = String(llmResult.content || '').slice(-300);
     throw new Error(
       `L1 scoring LLM returned unparseable JSON (done_reason=${llmResult.doneReason}, ` +
@@ -487,6 +478,7 @@ async function runL1Evaluation(input) {
       (llmResult.doneReason === 'length'
         ? 'The response was CUT OFF mid-JSON — raise maxTokens or reduce evidence items per dimension. '
         : '') +
+      `Parse error: ${parsed.error || 'no JSON object found in the response'}. ` +
       `Response tail: ...${tail}`);
   }
   // The score is derived from evidence, so a response carrying neither evidence key
