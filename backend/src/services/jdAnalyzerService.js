@@ -1,11 +1,28 @@
 /**
  * JD Analyzer Service
- * 
+ *
  * Analyzes Job Descriptions using LLM to extract and classify required skills.
- * Uses GROQ API with retry logic for robust skill classification.
+ *
+ * ── Determinism ──────────────────────────────────────────────────────────────
+ * This call is seeded and run at temperature 0, because its output DECIDES WHAT
+ * GETS SCORED downstream. It ran at temperature 0.7 with no seed, and that was the
+ * largest single source of Stage 1's run-to-run score drift: the match formula is
+ * matched/total, so a skill list that changed length between runs changed the
+ * denominator, and the same resume scored differently for reasons that had nothing
+ * to do with the resume. Rewording a skill ("CI/CD" vs "CI/CD Pipelines") moved the
+ * result too, since a differently-spelled skill is matched against different resume
+ * text.
+ *
+ * Seeding also buys the cold-start warm-up: llmClient only warms SEEDED calls, so an
+ * unseeded call here was additionally exposed to the first-generation-after-load
+ * divergence documented in llmClient._ensureWarm.
  */
 
 const axios = require('axios');
+
+// Same default as L1/L2/screening so every stage is reproducible on one footing.
+const ANALYZER_SEED = parseInt(process.env.JD_ANALYZER_SEED || '42', 10);
+const ANALYZER_TEMPERATURE = 0;
 
 // System prompt for JD analysis
 const SYSTEM_PROMPT = `You are a Senior Recruitment Manager preparing to take an interview.
@@ -68,15 +85,14 @@ ${jdContent}
 
 Provide the skill classifications as per the specified format.`;
 
-    // Call GROQ LLM with retry logic
-    const groqResponse = await _callGroqWithRetry(userPrompt);
+    const llmResponse = await _callLLMWithRetry(userPrompt);
 
     // Parse the response
-    const parsedAnalysis = _parseAnalysisResponse(groqResponse);
+    const parsedAnalysis = _parseAnalysisResponse(llmResponse);
 
     return {
       success: true,
-      analysis: groqResponse,
+      analysis: llmResponse,
       parsed_analysis: parsedAnalysis,
       raw_jd: jdContent,
       is_valid_jd: true,
@@ -94,13 +110,18 @@ Provide the skill classifications as per the specified format.`;
 }
 
 /**
- * Call LLM API with retry logic — uses shared llmClient (Ollama → GROQ → Mistral)
+ * Call the LLM with retry logic — uses the shared llmClient (Ollama only).
+ *
+ * Seeded at temperature 0: see the file header for why this call in particular must
+ * be reproducible. llmClient already retries transient faults inside its own budget,
+ * so the loop here is a thin outer guard and safe to keep — a seeded call at
+ * temperature 0 is idempotent, so attempt 2 returns what attempt 1 would have.
  *
  * @private
  * @param {string} userPrompt - The prompt to send to the LLM
  * @returns {Promise<string>} LLM response text
  */
-async function _callGroqWithRetry(userPrompt) {
+async function _callLLMWithRetry(userPrompt) {
   const { callLLM } = require('./llmClient');
   const maxAttempts = 3;
   const messages = [
@@ -110,7 +131,15 @@ async function _callGroqWithRetry(userPrompt) {
   let lastError;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await callLLM(messages, { temperature: 0.7, maxTokens: 1000 });
+      return await callLLM(messages, {
+        temperature: ANALYZER_TEMPERATURE,
+        maxTokens: 1000,
+        seed: ANALYZER_SEED,
+        // qwen3's reasoning tokens are what produced the "Wait, hmm, I need to..."
+        // fragments that reached the UI as skills. The parser splits on lines and
+        // keeps every non-empty one, so thinking output became skill entries.
+        think: false,
+      });
     } catch (error) {
       lastError = error;
       console.error(`[JDAnalyzer] LLM attempt ${attempt}/${maxAttempts} failed:`, error.message);
@@ -118,6 +147,7 @@ async function _callGroqWithRetry(userPrompt) {
       await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt - 1) * 1000));
     }
   }
+  throw lastError;
 }
 
 /**

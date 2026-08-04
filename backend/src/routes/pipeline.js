@@ -4,7 +4,7 @@ const { getDb } = require('../services/mongoClient');
 const { performPanelEvaluation } = require('../services/panelEvaluationService');
 const { runL1Evaluation } = require('../services/l1ScoringService');   // NEW Stage-2 service
 const { runL2Evaluation } = require('../services/l2ScoringService');   // NEW Stage-3 service
-const { analyzeJD } = require('../services/jdAnalyzerService');
+const { runScreening, appendScreeningHistory } = require('../services/screeningService');
 const { callLLM, checkOllamaHealth } = require('../services/llmClient');
 const { randomUUID } = require('crypto');
 
@@ -45,7 +45,33 @@ async function ensureScoringEngineAvailable(res, stage) {
 }
 
 /**
- * Helper to parse JSON safely from LLM response
+ * Render screening skill rows as tier-annotated lines for a downstream prompt.
+ *
+ * Stage 4's audit used to split these on the `matched` boolean, which now reads true
+ * for both STRONG and PARTIAL. Collapsing those into one "Matched" list would tell the
+ * auditor a skill evidenced only by a bare mention in a skills list was verified to
+ * the same standard as one backed by three years on a named project — flattening the
+ * distinction the tiers exist to preserve.
+ *
+ * Handles pre-v2 records, where rows carry only `matched`: those become STRONG/NONE,
+ * which is what the boolean meant at the time.
+ */
+function formatSkillTiers(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return '  (none)';
+  return rows.map(r => {
+    const tier = r.tier || (r.matched ? 'STRONG' : 'NONE');
+    const evidence = String(r.evidence || '').replace(/\s+/g, ' ').slice(0, 200);
+    return `  - [${tier}] ${r.skill}: ${evidence}`;
+  }).join('\n');
+}
+
+/**
+ * Helper to parse JSON safely from LLM response.
+ *
+ * Still used by the Stage 4 audit and the L1 question generator, whose outputs are
+ * prose-in-JSON rather than verbatim transcript quotes. The scoring paths (Stage 1/2/3)
+ * use services/jsonRepair instead — they ask the model to quote source text verbatim,
+ * so a quote containing a double quote is expected there and needs real repair.
  */
 function parseJSONSafely(text) {
   try {
@@ -80,7 +106,16 @@ function parseJSONSafely(text) {
 
 /**
  * POST /api/v1/pipeline/stage1
- * Save Stage 1 and analyze resume against JD
+ * Screen the resume against the JD and store the result.
+ *
+ * The screening itself lives in services/screeningService so it can be re-run against
+ * a stored record by scripts/rescore.js and scripts/verify_determinism.js, exactly as
+ * L1 and L2 can. Inline route logic could not be, which is why Stage 1's drift went
+ * unmeasured for so long.
+ *
+ * Stays synchronous (unlike stage2/stage3): one seeded skill-extraction call plus one
+ * seeded screening call is seconds, not the minutes a transcript evaluation takes, so
+ * there is nothing to gain from the async job store and its polling.
  */
 router.post('/stage1', async (req, res) => {
   try {
@@ -97,128 +132,41 @@ router.post('/stage1', async (req, res) => {
       });
     }
 
-    console.log(`[Stage1] jobId=${jobId} candidate="${candidateName}" jdLen=${jdText.length} resumeLen=${resumeText.length}`);
+    // Fail fast while the caller is still on the request. Stage 1 previously had no
+    // health gate, so with Ollama down it stored a completed record whose text read
+    // "please re-upload" — blaming the user's files for an engine outage.
+    if (!(await ensureScoringEngineAvailable(res, 'Stage1'))) return;
 
-    // ─── Step 1: Extract JD Skills ─────────────────────────────────────────
-    let mandatorySkills = [];
-    let goodToHaveSkills = [];
-    let keySkills = [];
-
-    if (jdText.trim()) {
-      try {
-        const jdAnalysis = await analyzeJD(jdText);
-        if (jdAnalysis.success && jdAnalysis.parsed_analysis) {
-          mandatorySkills = jdAnalysis.parsed_analysis.mandatory_skills || [];
-          goodToHaveSkills = jdAnalysis.parsed_analysis.good_to_have_skills || [];
-          keySkills = jdAnalysis.parsed_analysis.key_skills || [];
-        }
-        console.log(`[Stage1] JD skills extracted — mandatory: ${mandatorySkills.length}, good-to-have: ${goodToHaveSkills.length}`);
-      } catch (err) {
-        console.error('[Stage1] JD analysis failed:', err.message);
-      }
+    let screeningAnalysis;
+    try {
+      const result = await runScreening({ jobId, candidateName, jdText, resumeText });
+      screeningAnalysis = result.analysis;
+    } catch (err) {
+      // Report the real failure and store NOTHING. The previous handler swallowed
+      // every error and persisted a placeholder with matchScore 0 and status
+      // 'Partially Eligible' — a self-contradicting record, marked completed, whose
+      // advice to re-upload could never fix it because the files were never the
+      // problem. A screening that did not happen must not look like one that did.
+      console.error('[Stage1] Screening failed:', err.message);
+      return res.status(422).json({
+        success: false,
+        error: err.message,
+        code: 'SCREENING_FAILED',
+        retryable: true,
+      });
     }
 
-    // Fallback skills if JD analysis returned nothing
-    if (mandatorySkills.length === 0) mandatorySkills = ['Communication', 'Technical Adaptability', 'Problem Solving'];
-    if (goodToHaveSkills.length === 0) goodToHaveSkills = ['Agile / Scrum', 'Documentation'];
-
-    // ─── Step 2: LLM Resume vs JD Screening ────────────────────────────────
-    // Default: if no texts, store a "pending extraction" placeholder
-    let screeningAnalysis = {
-      mandatorySkillsMatch: mandatorySkills.map(s => ({
-        skill: s, matched: false, evidence: 'Resume or JD text not extracted — please re-upload.'
-      })),
-      additionalSkillsMatch: goodToHaveSkills.map(s => ({
-        skill: s, matched: false, evidence: 'Resume or JD text not extracted — please re-upload.'
-      })),
-      screeningSummary: 'Document text could not be extracted. Please re-upload valid PDF or DOCX files.',
-      matchScore: 0,
-      experienceMatch: 'Unable to determine — document extraction failed.',
-      status: 'Partially Eligible'
-    };
-
-    if (jdText.trim() && resumeText.trim()) {
-      // ── Improved LLM Prompt ──────────────────────────────────────────────
-      const systemPrompt = `You are a senior technical recruiter with 15+ years of experience. 
-Your task is to perform a precise resume-to-JD skills matching evaluation.
-You MUST read the actual resume content carefully and identify real evidence.
-Return ONLY a valid JSON object. No markdown, no explanations outside JSON.
-All string values must be JSON-safe (no raw newlines).`;
-
-      const userPrompt = `/no_think
-
-=== JOB DESCRIPTION ===
-${jdText.substring(0, 4000)}
-
-=== MANDATORY SKILLS TO EVALUATE ===
-${mandatorySkills.map((s, i) => `${i + 1}. ${s}`).join('\n')}
-
-=== GOOD-TO-HAVE SKILLS TO EVALUATE ===
-${goodToHaveSkills.map((s, i) => `${i + 1}. ${s}`).join('\n')}
-
-=== CANDIDATE RESUME ===
-${resumeText.substring(0, 5000)}
-
-=== YOUR TASK ===
-1. For EACH mandatory skill: read the resume carefully and determine if the candidate has this skill.
-   - Set "matched": true only if there is CLEAR evidence in the resume.
-   - Write a brief "evidence" quoting or paraphrasing the specific resume line that proves it.
-   - If not found, set "matched": false and write "Not found in resume."
-
-2. For EACH good-to-have skill: same approach.
-
-3. Calculate matchScore (0-100):
-   - Formula: (mandatoryMatched / totalMandatory * 70) + (goodToHaveMatched / totalGoodToHave * 30)
-   - Round to nearest integer.
-
-4. Determine status:
-   - "Eligible" if matchScore >= 70
-   - "Partially Eligible" if matchScore >= 40
-   - "Ineligible" if matchScore < 40
-
-5. Write a screeningSummary (2-3 sentences) summarising the candidate's overall fit.
-6. Write experienceMatch describing how their total years of experience compares to JD requirements.
-
-Return this exact JSON structure:
-{
-  "mandatorySkillsMatch": [
-    { "skill": "<skill name>", "matched": true, "evidence": "<specific resume evidence>" }
-  ],
-  "additionalSkillsMatch": [
-    { "skill": "<skill name>", "matched": false, "evidence": "Not found in resume." }
-  ],
-  "screeningSummary": "<2-3 sentence overall summary>",
-  "matchScore": <integer 0-100>,
-  "experienceMatch": "<experience comparison sentence>",
-  "status": "Eligible"
-}`;
-
-      try {
-        console.log('[Stage1] Calling LLM for screening analysis...');
-        const llmResponse = await callLLM([
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ], { temperature: 0.1, maxTokens: 1500, think: false });
-
-        console.log('[Stage1] LLM response received, parsing JSON...');
-        const parsed = parseJSONSafely(llmResponse);
-        if (parsed && typeof parsed.matchScore === 'number') {
-          screeningAnalysis = parsed;
-          console.log(`[Stage1] Screening complete — matchScore=${parsed.matchScore} status=${parsed.status}`);
-        } else {
-          console.warn('[Stage1] LLM returned invalid structure, using fallback');
-        }
-      } catch (err) {
-        console.error('[Stage1] LLM screening failed:', err.message);
-      }
-    } else {
-      console.warn(`[Stage1] Skipping LLM — jdText empty: ${!jdText.trim()}, resumeText empty: ${!resumeText.trim()}`);
-    }
-
-    // ─── Step 3: Store / Upsert in MongoDB ─────────────────────────────────
+    // ─── Store / Upsert in MongoDB ────────────────────────────────────────
     const db = await getDb();
     const pipelineCol = db.collection('pipeline_evaluations');
     const filter = { jobId, candidateName };
+
+    // Keep the previous screening rather than discarding it. $set overwrote the prior
+    // analysis, so a re-run destroyed the score it should be compared against — the
+    // one artefact that makes a drift complaint checkable after the fact. Shared with
+    // scripts/rescore.js --write so both writers preserve it identically.
+    const existing = await pipelineCol.findOne(filter);
+    const history = appendScreeningHistory(existing?.stage1);
 
     await pipelineCol.updateOne(filter, {
       $set: {
@@ -232,12 +180,8 @@ Return this exact JSON structure:
           completedAt: new Date().toISOString(),
           jdText,
           resumeText,
-          analysis: {
-            mandatorySkills,
-            goodToHaveSkills,
-            keySkills,
-            ...screeningAnalysis
-          }
+          analysis: screeningAnalysis,
+          history,
         },
         updatedAt: new Date()
       },
@@ -249,7 +193,7 @@ Return this exact JSON structure:
 
     // Ensure completedStages includes 'stage1'
     const doc = await pipelineCol.findOne(filter);
-    if (doc && !doc.completedStages.includes('stage1')) {
+    if (doc && !(doc.completedStages || []).includes('stage1')) {
       await pipelineCol.updateOne(filter, { $addToSet: { completedStages: 'stage1' } });
     }
 
@@ -642,10 +586,19 @@ ${resumeText.substring(0, 2500)}
 
 Screening Match Score: ${s1Analysis.matchScore ?? 'N/A'}%
 Screening Status: ${s1Analysis.status ?? 'N/A'}
-Mandatory Skills Matched: ${(s1Analysis.mandatorySkillsMatch || []).filter(s => s.matched).map(s => s.skill).join(', ') || 'None identified'}
-Mandatory Skills Missed: ${(s1Analysis.mandatorySkillsMatch || []).filter(s => !s.matched).map(s => s.skill).join(', ') || 'None'}
-Good-to-Have Skills Matched: ${(s1Analysis.additionalSkillsMatch || []).filter(s => s.matched).map(s => s.skill).join(', ') || 'None'}
-Good-to-Have Skills Missed: ${(s1Analysis.additionalSkillsMatch || []).filter(s => !s.matched).map(s => s.skill).join(', ') || 'None'}
+Score Derivation: ${s1Analysis.scoreBreakdown?.formula || 'Not recorded (screened before tiered scoring).'}
+${s1Analysis.skillsProvenance?.mandatoryInferred
+  ? 'IMPORTANT: The JD stated NO mandatory skills. The mandatory skills below were INFERRED BY AI from the role, not taken from the JD. Weigh screening accuracy accordingly — a gap against an inferred skill is weaker evidence of a screening failure than a gap against a JD-stated one.'
+  : 'Mandatory skills below were explicitly stated in the JD.'}
+
+Mandatory Skills by evidence tier (STRONG = demonstrated with context; PARTIAL = mentioned only, no supporting detail; NONE = absent):
+${formatSkillTiers(s1Analysis.mandatorySkillsMatch)}
+
+Good-to-Have Skills by evidence tier:
+${formatSkillTiers(s1Analysis.additionalSkillsMatch)}
+${(s1Analysis.reconciliation?.mandatoryMissing || []).length
+  ? `NOTE: the screening model failed to report ${s1Analysis.reconciliation.mandatoryMissing.length} mandatory skill(s) and they were scored NONE by default: ${s1Analysis.reconciliation.mandatoryMissing.join(', ')}. Treat these as unexamined rather than as confirmed gaps.`
+  : ''}
 Screening Summary: ${s1Analysis.screeningSummary || 'Not available.'}
 Experience Match: ${s1Analysis.experienceMatch || 'Not available.'}
 
@@ -832,8 +785,17 @@ router.post('/generate-l1-questions', async (req, res) => {
 
     const jdText     = existing.stage1.jdText     || '';
     const resumeText = existing.stage1.resumeText  || '';
-    const mandatorySkills = existing.stage1.analysis?.mandatorySkills || [];
-    const goodToHaveSkills = existing.stage1.analysis?.goodToHaveSkills || [];
+    const s1 = existing.stage1.analysis || {};
+    const mandatorySkills = s1.mandatorySkills || [];
+    const goodToHaveSkills = s1.goodToHaveSkills || [];
+
+    // Skills the screening could not verify are the ones an L1 panel most needs to
+    // probe — a STRONG match is already evidenced, a PARTIAL or NONE is an open
+    // question. Passing the tiers turns generic coverage questions into questions
+    // aimed at this candidate's actual gaps.
+    const unverified = [...(s1.mandatorySkillsMatch || []), ...(s1.additionalSkillsMatch || [])]
+      .filter(r => (r.tier || (r.matched ? 'STRONG' : 'NONE')) !== 'STRONG')
+      .map(r => `${r.skill} (${r.tier || (r.matched ? 'STRONG' : 'NONE')})`);
 
     const systemPrompt = `You are a world-class Senior Technical Recruiter and L1 Interview Coach with 15+ years of experience conducting structured technical interviews.
 
@@ -852,7 +814,12 @@ Return ONLY a valid JSON object. No markdown, no explanation outside JSON.`;
 ${jdText.substring(0, 3000)}
 
 === MANDATORY SKILLS ===
-${mandatorySkills.join(', ')}
+${mandatorySkills.join(', ')}${s1.skillsProvenance?.mandatoryInferred
+  ? '\n(NOTE: the JD did not state mandatory skills — these were inferred by AI from the role. Prefer questions grounded in the resume and the JD text over questions that assume these skills are hard requirements.)'
+  : ''}
+
+=== SKILLS THE SCREENING COULD NOT FULLY VERIFY (probe these hardest) ===
+${unverified.length ? unverified.join(', ') : '(none — every skill was strongly evidenced in the resume)'}
 
 === GOOD-TO-HAVE SKILLS ===
 ${goodToHaveSkills.join(', ')}

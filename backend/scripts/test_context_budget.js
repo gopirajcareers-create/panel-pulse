@@ -18,6 +18,7 @@
  */
 'use strict';
 
+const screening = require('../src/services/screeningService');
 const l1 = require('../src/services/l1ScoringService');
 const l2 = require('../src/services/l2ScoringService');
 const { NUM_CTX, CHARS_PER_TOKEN, promptCharBudget } = require('../src/services/llmClient');
@@ -38,9 +39,32 @@ const filler = (n, word) => (word + ' ').repeat(Math.ceil(n / (word.length + 1))
 // ─────────────────────────────────────────────────────────────────────────────
 console.log(`Context: num_ctx=${NUM_CTX} chars_per_token=${CHARS_PER_TOKEN}\n`);
 
+// A skill name at cleanSkillList's upper bound (80 chars), repeated to the per-bucket
+// cap. The screening prompt enumerates each skill TWICE — once as a numbered list and
+// once as a JSON row skeleton — so the skill lists are a real part of the overhead, not
+// a rounding error, and PROMPT_RESERVE_CHARS has to cover them.
+const worstCaseSkills = (n, word) => Array.from({ length: n }, (_, i) => ({
+  skill: `${filler(76, word)} ${String(i).padStart(2, '0')}`.slice(0, 80),
+  source: 'jd',
+}));
+
 const STAGES = [
   {
+    label: 'Screening (Stage 1)',
+    service: 'screeningService',
+    outputTokens: screening.MAX_OUTPUT_TOKENS,
+    system: screening.SCREENING_SYSTEM_PROMPT,
+    build: () => screening._buildScreeningPrompt(
+      filler(screening.MAX_JD_CHARS + 5000, 'requirement'),
+      filler(screening.MAX_RESUME_CHARS + 5000, 'experience'),
+      worstCaseSkills(screening.MAX_SKILLS_PER_BUCKET, 'mandatory'),
+      worstCaseSkills(screening.MAX_SKILLS_PER_BUCKET, 'preferred'),
+    ),
+    caps: { resume: screening.MAX_RESUME_CHARS, jd: screening.MAX_JD_CHARS },
+  },
+  {
     label: 'L1',
+    service: 'l1ScoringService',
     outputTokens: l1.MAX_OUTPUT_TOKENS,
     system: l1.L1_SCORING_SYSTEM_PROMPT,
     // Every input at its cap, and the transcript OVER its cap so the truncation path
@@ -55,6 +79,7 @@ const STAGES = [
   },
   {
     label: 'L2',
+    service: 'l2ScoringService',
     outputTokens: l2.MAX_OUTPUT_TOKENS,
     system: l2.L2_SCORING_SYSTEM_PROMPT,
     build: () => l2._buildScoringPrompt(
@@ -91,13 +116,13 @@ for (const stage of STAGES) {
   assert(`at least ${MIN_HEADROOM_TOKENS} tokens of headroom for future prompt edits`,
     headroom >= MIN_HEADROOM_TOKENS,
     headroom >= MIN_HEADROOM_TOKENS ? `${headroom} tokens spare`
-      : `only ${headroom} tokens spare — raise PROMPT_RESERVE_CHARS in ${stage.label.toLowerCase()}ScoringService`);
+      : `only ${headroom} tokens spare — raise PROMPT_RESERVE_CHARS in ${stage.service}`);
 
-  // The transcript should get the bulk of the window. If overhead has grown enough to
-  // dominate, the reserve is wrong even when the total still fits.
+  // The capped inputs should get the bulk of the window. If overhead has grown enough
+  // to dominate, the reserve is wrong even when the total still fits.
   const capChars = Object.values(stage.caps).reduce((a, b) => a + b, 0);
-  assert(`transcript caps are a usable size (${capChars} chars)`, capChars >= 10000,
-    `${capChars} chars for transcripts`);
+  assert(`input caps are a usable size (${capChars} chars)`, capChars >= 10000,
+    `${capChars} chars of scorable input`);
 
   console.log('');
 }

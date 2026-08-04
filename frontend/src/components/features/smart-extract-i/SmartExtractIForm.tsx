@@ -267,7 +267,11 @@ export function SmartExtractIForm({
 
   const handleStage1Submit = async () => {
     if (!jdId.trim() || !candidateName.trim()) { setError('JD ID and Candidate Name are required.'); return; }
-    if (!resumeFile && !jdFile) { setError('Please upload at least Resume or JD file.'); return; }
+    // Both, not either. The match score IS a JD-vs-resume comparison, so one document
+    // alone cannot produce one — asking for the missing file now beats a round-trip that
+    // ends in a screening rejection.
+    if (!jdFile) { setError('Please upload the JD — the match score compares it against the resume.'); return; }
+    if (!resumeFile) { setError('Please upload the Resume — the match score compares it against the JD.'); return; }
     setLoading(true); setError(null);
     const warnings: string[] = [];
     try {
@@ -290,16 +294,29 @@ export function SmartExtractIForm({
           fd.append('file', resumeFile);
           fd.append('jobId', jdId);
           const res = await apiClient.post('/api/v1/extract/jd', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-          if (res.data.success) {
-            resumeText = String(res.data.data?.JD ?? '');
-            if (!resumeText) warnings.push('Resume text could not be extracted from the file.');
-          }
+          // A success:false body used to fall through silently, leaving resumeText empty
+          // with no warning explaining why.
+          if (!res.data.success) throw new Error(res.data.error || 'Extraction returned no text.');
+          resumeText = String(res.data.data?.JD ?? '');
+          if (!resumeText) warnings.push('Resume text could not be extracted from the file.');
         } catch (e: any) {
           warnings.push(`Resume extraction failed: ${e.message}`);
         }
       }
 
-      // Submit to pipeline (backend now accepts empty texts gracefully)
+      // Screening needs BOTH documents and now refuses without them, rather than storing
+      // a completed record with a 0% score and text blaming the upload. Stop here so the
+      // extraction failure is reported as itself instead of surfacing as a screening error.
+      if (!jdText.trim() || !resumeText.trim()) {
+        const which = [!jdText.trim() && 'JD', !resumeText.trim() && 'resume'].filter(Boolean).join(' and ');
+        throw new Error(
+          `No ${which} text could be read, so there is nothing to screen against. ` +
+          (warnings.length ? `${warnings.join(' | ')}. ` : '') +
+          `The file may be a scanned image — upload a text-based PDF or DOCX.`
+        );
+      }
+
+      // Screening runs synchronously and takes a few seconds (two seeded model calls).
       await pipelineApi.submitStage1({
         jobId: jdId.trim(),
         candidateName: candidateName.trim(),
@@ -310,16 +327,12 @@ export function SmartExtractIForm({
         resumeText
       });
 
+      // Only reached once the screening itself succeeded, so this no longer marks the
+      // stage complete on the strength of a stored placeholder.
       saveRecord({ jdId: jdId.trim(), candidateName: candidateName.trim(), jdText, resumeText, completedAt: new Date().toISOString() });
       setCompletedStages(prev => new Set([...prev, 'stage1']));
       setSuccess(true);
-
-      if (warnings.length > 0) {
-        toast.success('Stage 1 stored — but some files could not be read. Check warnings below.');
-        setError(`⚠️ Warnings: ${warnings.join(' | ')} — The record was saved; re-upload corrected files to update.`);
-      } else {
-        toast.success('Stage 1 complete — JD & Resume stored on backend.');
-      }
+      toast.success('Stage 1 complete — JD & Resume screened.');
 
       // Navigate to CandidateResultsPage so user can see Stage 1 output
       setTimeout(() => {
@@ -327,7 +340,14 @@ export function SmartExtractIForm({
       }, 1500);
 
     } catch (err: any) {
-      setError(err.response?.data?.error || err.message || 'Upload failed');
+      // pipeline.api attaches `code` and `retryable` for the 503 (model down) and 422
+      // (screening failed) cases. Say so: nothing was stored, so the fix is to retry —
+      // not to re-cut the resume. Silence here is what made a model outage look like a
+      // bad upload.
+      const reason = err.response?.data?.error || err.message || 'Upload failed';
+      setError(err.retryable
+        ? `${reason} Nothing was saved for this candidate — retry the upload.`
+        : reason);
     } finally { setLoading(false); }
   };
 

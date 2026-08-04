@@ -14,12 +14,53 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { ReportDownloadButton } from '@/components/features/reports/ReportDownloadButton';
 import {
   ArrowLeft, Clock, User, FileText,
-  Check, X, RefreshCw, Info,
+  Check, X, RefreshCw, Info, CircleDot, AlertTriangle,
   ChevronDown, ChevronUp, Sparkles, Shield, Zap, Loader2, MessageSquare, RotateCcw, Star
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import type { SkillMatchRow, SkillTier } from '@/lib/api/pipeline.api';
 
 type StageId = 'stage1' | 'stage2' | 'stage3' | 'stage4';
+
+/**
+ * The three tiers must be visually distinct, not two shades of "matched".
+ *
+ * The UI rendered a boolean as a green tick or a red cross, which collapsed "6 years of
+ * Selenium on a named project" and "Selenium appears in a comma-separated skills list"
+ * into the same green tick — and the recruiter reading it had no way to tell which they
+ * were looking at. PARTIAL is amber and carries its own glyph for exactly that reason.
+ */
+const TIER_STYLE: Record<SkillTier, { label: string; icon: React.ReactNode; chip: string; text: string }> = {
+  STRONG: {
+    label: 'Strong',
+    icon: <Check className="w-3.5 h-3.5" />,
+    chip: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20',
+    text: 'text-emerald-400',
+  },
+  PARTIAL: {
+    label: 'Partial',
+    icon: <CircleDot className="w-3.5 h-3.5" />,
+    chip: 'bg-amber-500/10 text-amber-400 border border-amber-500/20',
+    text: 'text-amber-400',
+  },
+  NONE: {
+    label: 'Not found',
+    icon: <X className="w-3.5 h-3.5" />,
+    chip: 'bg-red-500/10 text-red-400 border border-red-500/20',
+    text: 'text-red-400',
+  },
+};
+
+/**
+ * Records screened before the tiered rubric carry only `matched`, and there are stored
+ * ones in the collection. Read the tier if present, otherwise map the old boolean to the
+ * ends of the scale — an old record cannot be PARTIAL, because that judgement was never
+ * made about it.
+ */
+function tierOf(row: Pick<SkillMatchRow, 'tier' | 'matched'>): SkillTier {
+  if (row.tier === 'STRONG' || row.tier === 'PARTIAL' || row.tier === 'NONE') return row.tier;
+  return row.matched ? 'STRONG' : 'NONE';
+}
 
 const STAGES = [
   { id: 'stage1' as StageId, label: 'Screening', shortLabel: 'Stage 1', color: 'text-violet-400', borderColor: 'border-violet-500/40', bgColor: 'bg-violet-500/10' },
@@ -178,6 +219,73 @@ export default function CandidateResultsPage() {
             <ReportDownloadButton data={detail} stageId="stage1" variant="secondary" showBothFormats={false} />
           </div>
 
+          {/* ── Provenance caveat ────────────────────────────────────────────
+              Shown at the top, before any number. Most real JDs never use the literal
+              words "mandatory" / "required" / "must have", so the JD-states-nothing case
+              is the COMMON one — and the screening used to fill the gap with hardcoded
+              generic skills presented exactly like JD-sourced ones. A recruiter acting on
+              "Eligible — 85%" has to be able to see which basis produced it. */}
+          {analysis.skillsProvenance?.notice && (
+            <div className={`border p-4 rounded-xl flex items-start gap-3 ${
+              analysis.skillsProvenance.mandatoryInferred
+                ? 'bg-violet-500/[0.07] border-violet-500/25'
+                : 'bg-amber-500/[0.07] border-amber-500/25'
+            }`}>
+              <AlertTriangle className={`w-4 h-4 mt-0.5 shrink-0 ${
+                analysis.skillsProvenance.mandatoryInferred ? 'text-violet-300' : 'text-amber-400'
+              }`} />
+              <div className="min-w-0">
+                <h4 className={`text-xs font-bold uppercase tracking-widest ${
+                  analysis.skillsProvenance.mandatoryInferred ? 'text-violet-300' : 'text-amber-400'
+                }`}>
+                  {analysis.skillsProvenance.mandatoryInferred
+                    ? 'AI-inferred — not stated in JD'
+                    : 'No screening criteria'}
+                </h4>
+                <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+                  {analysis.skillsProvenance.notice}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {analysis.skillsProvenance?.analyzerError && (
+            <div className="bg-red-500/[0.07] border border-red-500/25 p-4 rounded-xl flex items-start gap-3">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-400" />
+              <div className="min-w-0">
+                <h4 className="text-xs font-bold uppercase tracking-widest text-red-400">
+                  Skill extraction partially failed
+                </h4>
+                <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+                  The JD analyzer reported: {analysis.skillsProvenance.analyzerError}. The skill list
+                  below may be incomplete, so this score should be treated as provisional.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Skills the model was asked about but never answered on are scored Not found.
+              That is deliberately conservative, and it has to be labelled as such: an
+              unexamined skill is not the same finding as a confirmed gap. */}
+          {((analysis.reconciliation?.mandatoryMissing?.length || 0) +
+            (analysis.reconciliation?.goodToHaveMissing?.length || 0)) > 0 && (
+            <div className="bg-amber-500/[0.07] border border-amber-500/25 p-4 rounded-xl flex items-start gap-3">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
+              <div className="min-w-0">
+                <h4 className="text-xs font-bold uppercase tracking-widest text-amber-400">
+                  Unexamined skills
+                </h4>
+                <p className="text-xs text-text-secondary mt-1 leading-relaxed">
+                  The screening model did not report on{' '}
+                  {[...(analysis.reconciliation?.mandatoryMissing || []),
+                    ...(analysis.reconciliation?.goodToHaveMissing || [])].join(', ')}
+                  . These are scored as Not found, but treat them as unverified rather than
+                  as confirmed gaps — re-run the screening to get a verdict on them.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Status & Summary Cards Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
             {/* Match Score & Status card */}
@@ -188,6 +296,9 @@ export default function CandidateResultsPage() {
                   <span className={`px-3 py-1.5 rounded-full text-xs font-bold border ${
                     analysis.status === 'Eligible' ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' :
                     analysis.status === 'Partially Eligible' ? 'bg-orange-500/15 border-orange-500/30 text-orange-300' :
+                    // 'Not Screenable' is not a verdict on the candidate, so it must not
+                    // wear the same red as Ineligible — nothing was assessed.
+                    analysis.status === 'Not Screenable' ? 'bg-slate-500/15 border-slate-500/30 text-slate-300' :
                     'bg-red-500/15 border-red-500/30 text-red-300'
                   }`}>
                     {analysis.status}
@@ -214,19 +325,42 @@ export default function CandidateResultsPage() {
                         <p>
                           <strong className="text-red-400 font-bold">Ineligible (&lt; 40%):</strong> The candidate lacks core technical components.
                         </p>
+                        <p className="pt-1 border-t border-white/10">
+                          <strong className="text-slate-300 font-bold">How the score is built:</strong> each
+                          skill scores Strong 1.0, Partial 0.5 or Not found 0. Mandatory skills carry 70% of the
+                          total and good-to-have 30%; if one list is empty the other carries the full 100%.
+                          The percentage is calculated from the tiers shown below — it is not a separate judgement.
+                        </p>
                       </div>
                       {/* Arrow pointing left */}
                       <div className="absolute top-1/2 -translate-y-1/2 right-full translate-x-1.5 w-2 h-2 bg-black border-l border-b border-white/10 rotate-45" />
                     </div>
                   </div>
 
-                  <span className="px-3 py-1.5 rounded-lg text-xs font-bold bg-orange-500/10 border border-orange-500/25 text-orange-400 flex items-center gap-1.5 shadow-sm">
-                    <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
-                    Match Score: {analysis.matchScore}%
+                  {/* A null score means there were no skills to score against, which is
+                      not the same statement as 0% and must not render as one. */}
+                  <span className={`px-3 py-1.5 rounded-lg text-xs font-bold border flex items-center gap-1.5 shadow-sm ${
+                    analysis.matchScore == null
+                      ? 'bg-slate-500/10 border-slate-500/25 text-slate-400'
+                      : 'bg-orange-500/10 border-orange-500/25 text-orange-400'
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      analysis.matchScore == null ? 'bg-slate-400' : 'bg-orange-400 animate-pulse'
+                    }`} />
+                    {analysis.matchScore == null ? 'Match Score: not calculable' : `Match Score: ${analysis.matchScore}%`}
                   </span>
                 </div>
+
+                {/* The arithmetic, spelled out. The score used to be produced by the model
+                    from a formula in its prompt, so it could disagree with the tiers printed
+                    below it; showing the derivation is what makes that checkable by hand. */}
+                {analysis.scoreBreakdown?.formula && (
+                  <p className="text-[11px] text-text-muted mt-2.5 font-mono leading-relaxed">
+                    {analysis.scoreBreakdown.formula}
+                  </p>
+                )}
               </div>
-              
+
               {/* Experience match */}
               <div className="pt-3 border-t border-white/[0.06]">
                 <h4 className="text-xs font-bold text-text-muted uppercase tracking-widest mb-1">Experience Alignment</h4>
@@ -247,46 +381,95 @@ export default function CandidateResultsPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Mandatory Skills Match list */}
             <div className="bg-bg-card rounded-xl border border-white/[0.06] p-5 space-y-4">
-              <h3 className="text-sm font-bold text-text-primary flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-red-400" />
-                Mandatory Skills Coverage
-              </h3>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <h3 className="text-sm font-bold text-text-primary flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-red-400" />
+                  Mandatory Skills Coverage
+                </h3>
+                <TierCensus rows={analysis.mandatorySkillsMatch || []} />
+              </div>
+              {analysis.scoreBreakdown && (
+                <p className="text-[11px] text-text-muted">
+                  Weighted {analysis.scoreBreakdown.mandatory.weight}% of the match score
+                  {analysis.scoreBreakdown.weights_redistributed && ' (raised because the other bucket is empty)'}
+                </p>
+              )}
               <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                {analysis.mandatorySkillsMatch?.map((item, idx) => (
-                  <div key={idx} className="bg-white/[0.01] border border-white/[0.04] p-3.5 rounded-lg flex items-start gap-3.5">
-                    <span className={`p-1 rounded mt-0.5 ${item.matched ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                      {item.matched ? <Check className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-bold text-text-primary truncate">{item.skill}</p>
-                      <p className="text-xs text-text-muted mt-1 leading-relaxed">{item.evidence}</p>
-                    </div>
-                  </div>
-                ))}
+                {analysis.mandatorySkillsMatch?.length
+                  ? analysis.mandatorySkillsMatch.map((item, idx) => <SkillMatchItem key={idx} row={item} />)
+                  : <p className="text-xs text-text-muted italic">No mandatory skills were identified for this role.</p>}
               </div>
             </div>
 
             {/* Additional Skills Match list */}
             <div className="bg-bg-card rounded-xl border border-white/[0.06] p-5 space-y-4">
-              <h3 className="text-sm font-bold text-text-primary flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                Good-to-Have Skills Coverage
-              </h3>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <h3 className="text-sm font-bold text-text-primary flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  Good-to-Have Skills Coverage
+                </h3>
+                <TierCensus rows={analysis.additionalSkillsMatch || []} />
+              </div>
+              {analysis.scoreBreakdown && (
+                <p className="text-[11px] text-text-muted">
+                  Weighted {analysis.scoreBreakdown.goodToHave.weight}% of the match score
+                </p>
+              )}
               <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                {analysis.additionalSkillsMatch?.map((item, idx) => (
-                  <div key={idx} className="bg-white/[0.01] border border-white/[0.04] p-3.5 rounded-lg flex items-start gap-3.5">
-                    <span className={`p-1 rounded mt-0.5 ${item.matched ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                      {item.matched ? <Check className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-bold text-text-primary truncate">{item.skill}</p>
-                      <p className="text-xs text-text-muted mt-1 leading-relaxed">{item.evidence}</p>
-                    </div>
-                  </div>
-                ))}
+                {analysis.additionalSkillsMatch?.length
+                  ? analysis.additionalSkillsMatch.map((item, idx) => <SkillMatchItem key={idx} row={item} />)
+                  : (
+                    <p className="text-xs text-text-muted italic">
+                      {analysis.skillsProvenance?.goodToHaveNotice
+                        || 'The JD labels no skills as good-to-have.'}
+                    </p>
+                  )}
               </div>
             </div>
           </div>
+
+          {/* Prior screenings of this same record. Shown only when the record has been
+              re-screened, and it is the direct answer to "the score changed between runs":
+              the earlier numbers and the model that produced each are on screen instead of
+              being overwritten. */}
+          {(detail.stage1.history?.length || 0) > 0 && (
+            <div className="bg-bg-card rounded-xl border border-white/[0.06] p-5 space-y-3">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-orange-500">
+                Previous Screenings ({detail.stage1.history!.length})
+              </h3>
+              <div className="space-y-2">
+                {[...detail.stage1.history!].reverse().map((h, idx) => {
+                  const delta = (typeof h.matchScore === 'number' && typeof analysis.matchScore === 'number')
+                    ? analysis.matchScore - h.matchScore
+                    : null;
+                  return (
+                    <div key={idx} className="flex items-center gap-3 flex-wrap text-xs bg-white/[0.01] border border-white/[0.04] px-3 py-2 rounded-lg">
+                      <span className="text-text-muted font-mono">
+                        {h.screenedAt ? new Date(h.screenedAt).toLocaleString() : 'unknown date'}
+                      </span>
+                      <span className="font-bold text-text-primary">
+                        {h.matchScore == null ? 'not calculable' : `${h.matchScore}%`}
+                      </span>
+                      <span className="text-text-muted">{h.status || '—'}</span>
+                      {delta !== null && delta !== 0 && (
+                        <span className={delta > 0 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
+                          {delta > 0 ? `+${delta}` : delta} vs current
+                        </span>
+                      )}
+                      {/* A different model build is a legitimate reason for a changed score,
+                          and without the digest it is indistinguishable from sampling noise. */}
+                      {h.scoring_meta?.rubric_version && (
+                        <span className="text-text-muted/60 font-mono text-[10px]">
+                          {h.scoring_meta.rubric_version}
+                          {h.scoring_meta.model_digest ? ` · ${String(h.scoring_meta.model_digest).slice(0, 8)}` : ''}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* ── AI Recommended L1 Questions ────────────────────────────────── */}
           <L1QuestionsPanel
@@ -606,6 +789,66 @@ function L1QuestionsPanel({ questions, generating, error, onGenerate }: {
 }
 
 // ─── Collapsible TextBox helper ──────────────────────────────────────────────
+
+/**
+ * One screened skill: its tier, the resume text that earned it, and — where the backend
+ * cut the model's claim down — why.
+ *
+ * The demotion note is shown rather than hidden because it is the answer to "why is this
+ * only Partial when the resume clearly mentions it?", which is otherwise unanswerable
+ * from the screen and was the shape of the original inconsistency complaint.
+ */
+function SkillMatchItem({ row }: { row: SkillMatchRow }) {
+  const tier = tierOf(row);
+  const style = TIER_STYLE[tier];
+  const demotion = row.audit?.demoted ? row.audit.demotion_reasons : null;
+
+  return (
+    <div className="bg-white/[0.01] border border-white/[0.04] p-3.5 rounded-lg flex items-start gap-3.5">
+      <span className={`p-1 rounded mt-0.5 shrink-0 ${style.chip}`} title={style.label}>
+        {style.icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-sm font-bold text-text-primary truncate">{row.skill}</p>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${style.chip}`}>
+            {style.label}
+          </span>
+          {row.source === 'ai-suggested' && (
+            <span
+              className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-violet-500/10 text-violet-300 border border-violet-500/20"
+              title="This skill was inferred by AI from the role — the JD does not state it."
+            >
+              AI-inferred
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-text-muted mt-1 leading-relaxed">{row.evidence}</p>
+        {demotion && demotion.length > 0 && (
+          <p className="text-[11px] text-amber-400/70 mt-1.5 leading-relaxed">
+            Downgraded from {row.audit!.claimed_tier}: {demotion.join('; ')}.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Tier census for a bucket, so coverage is legible without counting rows by eye. */
+function TierCensus({ rows }: { rows: SkillMatchRow[] }) {
+  if (!rows?.length) return null;
+  const counts = { STRONG: 0, PARTIAL: 0, NONE: 0 };
+  for (const r of rows) counts[tierOf(r)]++;
+  return (
+    <div className="flex items-center gap-3 text-[11px] font-bold">
+      {(Object.keys(TIER_STYLE) as SkillTier[]).map(t => (
+        <span key={t} className={counts[t] ? TIER_STYLE[t].text : 'text-text-muted/40'}>
+          {counts[t]} {TIER_STYLE[t].label}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 function CollapsibleTextBox({ title, text, isOrange = false }: { title: string; text: string; isOrange?: boolean }) {
   const [open, setOpen] = useState(false);

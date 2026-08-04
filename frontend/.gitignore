@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Local overrides — never commit. backend/.gitignore already ignores its own .env;
+# frontend's was missing, so frontend/.env showed up as untracked and could be swept
+# into a `git add -A`. The checked-in .env.development / .env.production stay tracked.
+.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

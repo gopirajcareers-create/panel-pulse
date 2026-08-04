@@ -1,6 +1,6 @@
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import type { PipelineDetail } from '@/lib/api/pipeline.api';
+import type { PipelineDetail, SkillMatchRow, SkillTier } from '@/lib/api/pipeline.api';
 
 interface ReportGeneratorOptions {
   data: PipelineDetail;
@@ -25,43 +25,130 @@ function formatDate(dateStr: string): string {
 // ============================================
 // STAGE 1: SCREENING REPORT
 // ============================================
+
+/**
+ * Tier presentation for the printed report.
+ *
+ * A downloaded report is the artefact that leaves the tool and gets forwarded to people
+ * who cannot ask the UI a follow-up question, so it must not flatten Strong and Partial
+ * into one tick — that ambiguity is precisely what made the on-screen coverage look
+ * inconsistent to the reader.
+ */
+const REPORT_TIER: Record<SkillTier, { glyph: string; color: string; label: string }> = {
+  STRONG:  { glyph: '✓', color: '#059669', label: 'Strong' },
+  PARTIAL: { glyph: '◐', color: '#d97706', label: 'Partial' },
+  NONE:    { glyph: '✗', color: '#dc2626', label: 'Not found' },
+};
+
+/** Pre-tier records carry only `matched`; they were never graded, so no PARTIAL. */
+function reportTierOf(row: Pick<SkillMatchRow, 'tier' | 'matched'>): SkillTier {
+  if (row.tier === 'STRONG' || row.tier === 'PARTIAL' || row.tier === 'NONE') return row.tier;
+  return row.matched ? 'STRONG' : 'NONE';
+}
+
+function skillRowsHTML(rows: SkillMatchRow[]): string {
+  return (rows || []).map(item => {
+    const t = REPORT_TIER[reportTierOf(item)];
+    const inferred = item.source === 'ai-suggested'
+      ? ' <span style="font-size:9px;color:#7c3aed;font-weight:700;">(AI-INFERRED)</span>'
+      : '';
+    // The demotion reason is carried into the report for the same reason it is on screen:
+    // it answers "the resume mentions this — why is it only Partial?" without which the
+    // grade reads as arbitrary.
+    const demotion = item.audit?.demoted
+      ? `<div style="font-size:10px;color:#b45309;margin-top:3px;">Downgraded from ${esc(item.audit.claimed_tier)}: ${esc(item.audit.demotion_reasons.join('; '))}</div>`
+      : '';
+    return `
+    <tr>
+      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;white-space:nowrap;">
+        <span style="display:inline-block;width:18px;height:18px;border-radius:50%;background:${t.color};color:white;text-align:center;line-height:18px;font-size:11px;font-weight:bold;">${t.glyph}</span>
+        <span style="font-size:10px;color:${t.color};font-weight:700;margin-left:4px;">${t.label}</span>
+      </td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-weight:600;">${esc(item.skill)}${inferred}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:11px;">${esc(item.evidence)}${demotion}</td>
+    </tr>
+  `;
+  }).join('');
+}
+
+function skillTableHTML(title: string, rows: SkillMatchRow[], weight: number | null, emptyNote: string): string {
+  return `
+      <div style="margin-bottom:24px;">
+        <h3 style="font-size:12px;font-weight:700;color:#111827;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">
+          ${esc(title)}${weight != null ? ` <span style="font-weight:500;color:#6b7280;text-transform:none;letter-spacing:0;">— ${weight}% of the match score</span>` : ''}
+        </h3>
+        <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;background:white;">
+          <thead>
+            <tr style="background:#f9fafb;">
+              <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;width:100px;">Coverage</th>
+              <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;">Skill</th>
+              <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;">Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${skillRowsHTML(rows) || `<tr><td colspan="3" style="padding:12px;text-align:center;color:#9ca3af;">${esc(emptyNote)}</td></tr>`}
+          </tbody>
+        </table>
+      </div>`;
+}
+
 function generateStage1HTML(data: PipelineDetail): string {
   const analysis = data.stage1?.analysis;
   if (!analysis) return '<p>No screening data available.</p>';
 
   const statusColor =
     analysis.status === 'Eligible' ? '#059669' :
-    analysis.status === 'Partially Eligible' ? '#d97706' : '#dc2626';
+    analysis.status === 'Partially Eligible' ? '#d97706' :
+    // Not Screenable is not a verdict on the candidate — nothing was assessed.
+    analysis.status === 'Not Screenable' ? '#64748b' : '#dc2626';
 
-  const mandatorySkillsRows = (analysis.mandatorySkillsMatch || []).map(item => `
-    <tr>
-      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;">
-        <span style="display:inline-block;width:18px;height:18px;border-radius:50%;background:${item.matched ? '#059669' : '#dc2626'};color:white;text-align:center;line-height:18px;font-size:11px;font-weight:bold;">${item.matched ? '✓' : '✗'}</span>
-      </td>
-      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-weight:600;">${esc(item.skill)}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:11px;">${esc(item.evidence)}</td>
-    </tr>
-  `).join('');
+  const prov = analysis.skillsProvenance;
+  const provenanceBanner = prov?.notice ? `
+      <div style="background:${prov.mandatoryInferred ? '#f5f3ff' : '#fffbeb'};border-left:3px solid ${prov.mandatoryInferred ? '#7c3aed' : '#d97706'};padding:12px 14px;margin-bottom:16px;border-radius:4px;">
+        <p style="font-size:11px;font-weight:700;color:${prov.mandatoryInferred ? '#6d28d9' : '#b45309'};margin:0 0 4px;text-transform:uppercase;letter-spacing:0.05em;">
+          ${prov.mandatoryInferred ? 'AI-inferred — not stated in JD' : 'No screening criteria'}
+        </p>
+        <p style="font-size:11px;color:#4b5563;margin:0;line-height:1.5;">${esc(prov.notice)}</p>
+      </div>` : '';
 
-  const additionalSkillsRows = (analysis.additionalSkillsMatch || []).map(item => `
-    <tr>
-      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;">
-        <span style="display:inline-block;width:18px;height:18px;border-radius:50%;background:${item.matched ? '#059669' : '#dc2626'};color:white;text-align:center;line-height:18px;font-size:11px;font-weight:bold;">${item.matched ? '✓' : '✗'}</span>
-      </td>
-      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-weight:600;">${esc(item.skill)}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:11px;">${esc(item.evidence)}</td>
-    </tr>
-  `).join('');
+  const missing = [
+    ...(analysis.reconciliation?.mandatoryMissing || []),
+    ...(analysis.reconciliation?.goodToHaveMissing || []),
+  ];
+  const unexaminedBanner = missing.length ? `
+      <div style="background:#fffbeb;border-left:3px solid #d97706;padding:12px 14px;margin-bottom:16px;border-radius:4px;">
+        <p style="font-size:11px;font-weight:700;color:#b45309;margin:0 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Unexamined skills</p>
+        <p style="font-size:11px;color:#4b5563;margin:0;line-height:1.5;">
+          The screening model did not report on ${esc(missing.join(', '))}. These are scored as
+          Not found, but should be read as unverified rather than as confirmed gaps.
+        </p>
+      </div>` : '';
+
+  const b = analysis.scoreBreakdown;
 
   return `
     <div class="stage-section">
       <h2 style="color:#7c3aed;font-size:18px;font-weight:700;margin-bottom:16px;border-bottom:2px solid #7c3aed;padding-bottom:8px;">Stage 1: Screening Results</h2>
 
+      ${provenanceBanner}
+      ${unexaminedBanner}
+
       <div style="background:#f8fafc;border-left:3px solid ${statusColor};padding:16px;margin-bottom:20px;border-radius:4px;">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
           <span style="display:inline-block;padding:4px 12px;background:${statusColor};color:white;font-size:11px;font-weight:700;text-transform:uppercase;border-radius:99px;">${esc(analysis.status)}</span>
-          <span style="font-size:14px;font-weight:700;color:#111827;">Match Score: ${analysis.matchScore}%</span>
+          <span style="font-size:14px;font-weight:700;color:#111827;">
+            ${analysis.matchScore == null ? 'Match Score: not calculable' : `Match Score: ${analysis.matchScore}%`}
+          </span>
         </div>
+        ${b?.formula ? `
+        <p style="font-size:10px;color:#6b7280;margin:0 0 8px;font-family:monospace;">
+          ${esc(b.formula)}
+        </p>
+        <p style="font-size:10px;color:#6b7280;margin:0 0 8px;line-height:1.5;">
+          Each skill scores Strong 1.0, Partial 0.5 or Not found 0. The percentage is calculated
+          from the tiers in the tables below — it is not a separate judgement, so it can be checked
+          by hand.
+        </p>` : ''}
         <p style="font-size:11px;color:#4b5563;margin:0;"><strong>Experience Match:</strong> ${esc(analysis.experienceMatch)}</p>
       </div>
 
@@ -72,37 +159,11 @@ function generateStage1HTML(data: PipelineDetail): string {
         </p>
       </div>
 
-      <div style="margin-bottom:24px;">
-        <h3 style="font-size:12px;font-weight:700;color:#111827;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Mandatory Skills Coverage</h3>
-        <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;background:white;">
-          <thead>
-            <tr style="background:#f9fafb;">
-              <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;width:60px;">Status</th>
-              <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;">Skill</th>
-              <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;">Evidence</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${mandatorySkillsRows || '<tr><td colspan="3" style="padding:12px;text-align:center;color:#9ca3af;">No mandatory skills data</td></tr>'}
-          </tbody>
-        </table>
-      </div>
+      ${skillTableHTML('Mandatory Skills Coverage', analysis.mandatorySkillsMatch,
+        b?.mandatory.weight ?? null, 'No mandatory skills were identified for this role')}
 
-      <div style="margin-bottom:24px;">
-        <h3 style="font-size:12px;font-weight:700;color:#111827;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Good-to-Have Skills Coverage</h3>
-        <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;background:white;">
-          <thead>
-            <tr style="background:#f9fafb;">
-              <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;width:60px;">Status</th>
-              <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;">Skill</th>
-              <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;">Evidence</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${additionalSkillsRows || '<tr><td colspan="3" style="padding:12px;text-align:center;color:#9ca3af;">No additional skills data</td></tr>'}
-          </tbody>
-        </table>
-      </div>
+      ${skillTableHTML('Good-to-Have Skills Coverage', analysis.additionalSkillsMatch,
+        b?.goodToHave.weight ?? null, prov?.goodToHaveNotice || 'No additional skills data')}
     </div>
   `;
 }
