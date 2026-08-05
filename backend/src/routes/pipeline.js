@@ -293,8 +293,18 @@ router.post('/stage2', async (req, res) => {
         console.log(`[Stage2] Saved to MongoDB — jobId=${jobId} score=${result.evaluation.score}`);
       })
       .catch(err => {
-        console.error('[Stage2] Evaluation error:', err.message);
-        jobStore.set(asyncJobId, { status: 'failed', error: err.message, createdAt: Date.now() });
+        // Log the stack, not just the message. The scoring errors this catches are
+        // multi-sentence diagnostics (parse error + response tail + which knob to
+        // turn), and knowing whether the throw came from scoring or from the Mongo
+        // write that follows it decides where to look.
+        console.error(`[Stage2] Evaluation error — jobId=${jobId} candidate="${candidateName}":`, err.stack || err.message);
+        jobStore.set(asyncJobId, {
+          status: 'failed',
+          error: err.message,
+          code: err.code || 'STAGE2_FAILED',
+          retryable: err.retryable !== false,
+          createdAt: Date.now(),
+        });
       });
 
     return res.status(202).json({ success: true, async_job_id: asyncJobId, status: 'processing' });
@@ -396,8 +406,14 @@ router.post('/stage3', async (req, res) => {
         });
       })
       .catch(err => {
-        console.error('[Stage3] Evaluation error:', err.message);
-        jobStore.set(asyncJobId, { status: 'failed', error: err.message, createdAt: Date.now() });
+        console.error(`[Stage3] Evaluation error — jobId=${jobId} candidate="${candidateName}":`, err.stack || err.message);
+        jobStore.set(asyncJobId, {
+          status: 'failed',
+          error: err.message,
+          code: err.code || 'STAGE3_FAILED',
+          retryable: err.retryable !== false,
+          createdAt: Date.now(),
+        });
       });
 
     return res.status(202).json({ success: true, async_job_id: asyncJobId, status: 'processing' });
@@ -909,12 +925,33 @@ Return this exact JSON schema:
 /**
  * GET /api/v1/pipeline/score/job/:jobId
  * Poll for async stage2/3 jobs
+ *
+ * A FAILED job is reported as 200 with status:'failed', not 5xx. The poll itself
+ * succeeded — it is answering "how is the job doing?" and the answer is "it failed",
+ * which is not a transport error. That distinction is not pedantic: returning 500
+ * here made axios reject, so pipeline.api.ts never reached its own
+ * `status === 'failed'` branch and the real diagnostic in `job.error` was replaced by
+ * axios's generic "Request failed with status code 500", while the response
+ * interceptor showed "Server error. Please try again later.".
+ *
+ * l1ScoringService goes to real trouble to say WHY a run failed — done_reason=length
+ * vs a JSON syntax error vs prose instead of JSON, each with a different fix, plus the
+ * response tail. All of it was being discarded at this line, which is why the same
+ * failure kept coming back: nobody could see what it was.
  */
 router.get('/score/job/:jobId', (req, res) => {
   const job = jobStore.get(req.params.jobId);
   if (!job) return res.status(404).json({ success: false, error: 'Job not found' });
   if (job.status === 'processing') return res.status(202).json({ success: true, status: 'processing' });
-  if (job.status === 'failed') return res.status(500).json({ success: false, status: 'failed', error: job.error });
+  if (job.status === 'failed') {
+    return res.status(200).json({
+      success: false,
+      status: 'failed',
+      error: job.error,
+      code: job.code || 'STAGE_FAILED',
+      retryable: job.retryable !== false,
+    });
+  }
   return res.status(200).json({ ...job.data, status: 'complete' });
 });
 

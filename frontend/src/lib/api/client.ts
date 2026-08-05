@@ -95,7 +95,11 @@ apiClient.interceptors.response.use(
       if (isSilenced404) { /* expected 404 — caller handles locally */ }
       else if (statusCode === 404) toast.error(`Not found: ${message}`);
       else if (statusCode === 401) { /* 401 handled in-page, no global toast */ }
-      else if (statusCode === 500) toast.error('Server error. Please try again later.');
+      // Prefer the server's own message over "Server error. Please try again later."
+      // The scoring endpoints return genuinely actionable 500 bodies (which parse
+      // failed and why, which knob to turn), and replacing them with a generic string
+      // meant the same failure was reported identically no matter its cause.
+      else if (statusCode === 500) toast.error(message !== 'An error occurred' ? message : 'Server error. Please try again later.');
       else if (statusCode !== 429) toast.error(message);
     } else if (error.request) {
       // Suppress network error toast for background auth session checks — expected to fail on login page

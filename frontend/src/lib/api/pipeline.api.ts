@@ -32,6 +32,68 @@ function rethrowScoringError(err: any, stage: string): never {
 }
 
 /**
+ * Poll an async scoring job (Stage 2 / Stage 3) until it finishes.
+ *
+ * Shared by both stages because they had byte-identical copies of this loop, and a
+ * fix applied to one silently left the other reporting failures the old way.
+ *
+ * A job that FAILS comes back as 200 with status:'failed' and the real diagnostic in
+ * `error` — see the poll route in routes/pipeline.js. It used to be a 500, which made
+ * axios reject before this loop could read the body, so the specific reason a scoring
+ * run failed ("response was CUT OFF mid-JSON — raise maxTokens", with the response
+ * tail) was replaced by "Request failed with status code 500". The error text below is
+ * therefore the whole point of this function, not a fallback.
+ *
+ * A poll REQUEST that fails is different: the job is very likely still running, so a
+ * single dropped request or a backend restart mid-run should not abandon a scoring run
+ * that takes minutes. Transport errors are tolerated until they persist.
+ */
+async function pollScoringJob(jobId: string, stage: string): Promise<any> {
+  const MAX_POLLS = 150;          // x 4s = 10 min, matching OLLAMA_RETRY_BUDGET_MS
+  const MAX_CONSECUTIVE_POLL_ERRORS = 3;
+  let pollErrors = 0;
+  let lastPollError: any = null;
+
+  for (let i = 0; i < MAX_POLLS; i++) {
+    await new Promise(res => setTimeout(res, 4000));
+
+    let pollData: any;
+    try {
+      const pollResp = await apiClient.get(`/api/v1/pipeline/score/job/${jobId}`, { timeout: 10000 });
+      pollData = pollResp.data;
+      pollErrors = 0;
+    } catch (err: any) {
+      // 404 means the job is genuinely gone (backend restarted, or the 30-min
+      // reaper collected it) — no amount of polling brings it back.
+      if (err?.response?.status === 404) {
+        throw new Error(`${stage} scoring job is no longer available. The server may have restarted — please run it again.`);
+      }
+      lastPollError = err;
+      if (++pollErrors >= MAX_CONSECUTIVE_POLL_ERRORS) {
+        throw new Error(`Lost contact with the scoring service while ${stage} was running ` +
+          `(${err?.message || 'network error'}). The evaluation may still be in progress — check Dashboard I before re-running.`);
+      }
+      continue;
+    }
+
+    if (pollData?.status === 'processing') continue;
+
+    if (pollData?.status === 'failed' || !pollData?.success) {
+      const e = new Error(pollData?.error || `${stage} scoring failed`);
+      (e as any).code = pollData?.code || 'STAGE_FAILED';
+      (e as any).retryable = pollData?.retryable !== false;
+      throw e;
+    }
+
+    if (pollData?.status === 'complete') return pollData.evaluation;
+  }
+
+  throw new Error(lastPollError
+    ? `${stage} evaluation timed out after 10 minutes (last poll error: ${lastPollError.message}).`
+    : `${stage} evaluation timed out after 10 minutes. The transcript may be too long — check the backend logs.`);
+}
+
+/**
  * How strongly the resume evidences a skill.
  *
  * Replaces a boolean. A boolean forced a borderline skill — named in a skills list with
@@ -331,24 +393,7 @@ export const pipelineApi = {
     const jobId = startResp.data?.async_job_id;
     if (!jobId) throw new Error('No job ID returned from pipeline scoring service');
 
-    // Poll until complete
-    const MAX_POLLS = 150;
-    for (let i = 0; i < MAX_POLLS; i++) {
-      await new Promise(res => setTimeout(res, 4000));
-      const pollResp = await apiClient.get(`/api/v1/pipeline/score/job/${jobId}`, { timeout: 10000 });
-      const pollData = pollResp.data;
-
-      if (pollData?.status === 'processing') continue;
-
-      if (pollData?.status === 'failed' || !pollData?.success) {
-        throw new Error(pollData?.error || 'Stage 2 scoring failed');
-      }
-
-      if (pollData?.status === 'complete') {
-        return pollData.evaluation;
-      }
-    }
-    throw new Error('Stage 2 evaluation timed out');
+    return pollScoringJob(jobId, 'Stage 2');
   },
 
   async submitStage3(data: {
@@ -367,24 +412,7 @@ export const pipelineApi = {
     const jobId = startResp.data?.async_job_id;
     if (!jobId) throw new Error('No job ID returned from pipeline scoring service');
 
-    // Poll until complete
-    const MAX_POLLS = 150;
-    for (let i = 0; i < MAX_POLLS; i++) {
-      await new Promise(res => setTimeout(res, 4000));
-      const pollResp = await apiClient.get(`/api/v1/pipeline/score/job/${jobId}`, { timeout: 10000 });
-      const pollData = pollResp.data;
-
-      if (pollData?.status === 'processing') continue;
-
-      if (pollData?.status === 'failed' || !pollData?.success) {
-        throw new Error(pollData?.error || 'Stage 3 scoring failed');
-      }
-
-      if (pollData?.status === 'complete') {
-        return pollData.evaluation;
-      }
-    }
-    throw new Error('Stage 3 evaluation timed out');
+    return pollScoringJob(jobId, 'Stage 3');
   },
 
   async submitStage4(data: {
