@@ -228,6 +228,38 @@ function evaluationChecks(dimensions) {
           assert(`rubric_version recorded (${a.scoring_meta.rubric_version})`,
             String(a.scoring_meta.rubric_version || '').includes('screening-v2'));
 
+          // The self-contradiction check. A NONE row for a skill the resume names verbatim
+          // is exactly what produced "strong experience with Cypress" above a Cypress row
+          // reading "Not found in resume" — the promotion in deriveTier should have caught
+          // it, so any survivor here is a hole in that logic.
+          const falseNegatives = screeningRows(a)
+            .filter(r => r.tier === 'NONE' && r.audit?.skill_phrase_in_resume);
+          assert('no skill scored NONE while named verbatim in the resume' +
+            (falseNegatives.length ? ` — ${falseNegatives.map(r => r.skill).join(', ')}` : ''),
+            falseNegatives.length === 0);
+
+          // The summary is model prose written in the same response as the tiers. It has
+          // no bearing on the score, so a conflict is a warning rather than a failure —
+          // but it is the thing a reader sees first, so it must not pass unremarked.
+          const conflicts = a.summaryContradictions || [];
+          if (conflicts.length) {
+            console.log(`  ⚠️  summary contradicts the evidence for ` +
+              `${conflicts.map(c => c.skill).join(', ')} — prose claims a skill scored NONE`);
+          }
+
+          assert('a derived coverage line is stored',
+            String(a.coverageSummary || '').trim().length > 0);
+
+          // Promotions are deterministic string operations, so a cold/warm mismatch in the
+          // count would mean the underlying tiers moved — already caught by the
+          // fingerprint, but reported so the log explains WHY a score differs from a
+          // stored one that predates this check.
+          const promoted = screeningRows(a).filter(r => r.audit?.promoted);
+          if (promoted.length) {
+            console.log(`  ⚠️  ${promoted.length} model false negative(s) corrected upward: ` +
+              promoted.map(r => r.skill).join(', '));
+          }
+
           // Truncation is silent in the output but changes it: a skill in the dropped
           // tail reads as absent. Surfaced as a warning, not a failure — a long resume
           // is legitimate, an unrecorded truncation is not.

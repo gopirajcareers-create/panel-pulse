@@ -58,6 +58,11 @@ function skillRowsHTML(rows: SkillMatchRow[]): string {
     const demotion = item.audit?.demoted
       ? `<div style="font-size:10px;color:#b45309;margin-top:3px;">Downgraded from ${esc(item.audit.claimed_tier)}: ${esc(item.audit.demotion_reasons.join('; '))}</div>`
       : '';
+    // The opposite correction: the model reported the skill absent, the resume names it.
+    // Recorded because the reader is otherwise looking at a Partial the model called None.
+    const promotion = item.audit?.promoted
+      ? `<div style="font-size:10px;color:#047857;margin-top:3px;">Corrected upward: ${esc(item.audit.demotion_reasons.join('; '))}</div>`
+      : '';
     return `
     <tr>
       <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;white-space:nowrap;">
@@ -65,7 +70,7 @@ function skillRowsHTML(rows: SkillMatchRow[]): string {
         <span style="font-size:10px;color:${t.color};font-weight:700;margin-left:4px;">${t.label}</span>
       </td>
       <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-weight:600;">${esc(item.skill)}${inferred}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:11px;">${esc(item.evidence)}${demotion}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:11px;">${esc(item.evidence)}${demotion}${promotion}</td>
     </tr>
   `;
   }).join('');
@@ -124,6 +129,23 @@ function generateStage1HTML(data: PipelineDetail): string {
         </p>
       </div>` : '';
 
+  // Travels with the document. The summary is model prose written alongside the tiers and
+  // can assert a skill the same run scored NONE; a downloaded report that shows the claim
+  // without the conflict is worse than the screen, since the reader cannot cross-check it.
+  const conflicts = analysis.summaryContradictions || [];
+  const contradictionBanner = conflicts.length ? `
+        <div style="background:#fffbeb;border-left:3px solid #d97706;padding:12px 14px;margin-top:8px;border-radius:4px;">
+          <p style="font-size:11px;font-weight:700;color:#b45309;margin:0 0 4px;text-transform:uppercase;letter-spacing:0.05em;">Summary conflicts with the evidence</p>
+          <p style="font-size:11px;color:#4b5563;margin:0 0 6px;line-height:1.5;">
+            The summary above claims ${conflicts.length === 1 ? 'a skill' : 'skills'} that the skill
+            tables below found no resume evidence for. The score is computed from the tables, not
+            from this text.
+          </p>
+          <ul style="margin:0;padding-left:16px;">
+            ${conflicts.map(c => `<li style="font-size:11px;color:#4b5563;line-height:1.5;"><strong>${esc(c.skill)}</strong> — scored as not evidenced, yet the summary says: <em>"${esc(c.sentence)}"</em></li>`).join('')}
+          </ul>
+        </div>` : '';
+
   const b = analysis.scoreBreakdown;
 
   return `
@@ -154,9 +176,14 @@ function generateStage1HTML(data: PipelineDetail): string {
 
       <div style="margin-bottom:24px;">
         <h3 style="font-size:12px;font-weight:700;color:#111827;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">Screening Summary</h3>
+        ${analysis.coverageSummary ? `
+        <p style="font-size:11px;color:#111827;line-height:1.6;background:#f8fafc;padding:10px 12px;border:1px solid #e5e7eb;border-radius:4px;font-weight:600;margin:0 0 8px;">
+          ${esc(analysis.coverageSummary)}
+        </p>` : ''}
         <p style="font-size:11px;color:#374151;line-height:1.6;background:white;padding:12px;border:1px solid #e5e7eb;border-radius:4px;font-style:italic;">
           "${esc(analysis.screeningSummary)}"
         </p>
+        ${contradictionBanner}
       </div>
 
       ${skillTableHTML('Mandatory Skills Coverage', analysis.mandatorySkillsMatch,

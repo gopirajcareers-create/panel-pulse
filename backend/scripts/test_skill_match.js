@@ -14,7 +14,8 @@
 
 const {
   computeMatchScore, reconcileRows, deriveTier, coerceClaimedTier,
-  skillMentioned, groundingRatio, hasContextMarkers, looksLikeSkillsList,
+  skillMentioned, skillPhraseInResume, groundingRatio, hasContextMarkers,
+  looksLikeSkillsList, findSummaryContradictions, coverageSentence,
   normalizeForMatch, significantTokens,
 } = require('../src/services/skillMatchScoring');
 
@@ -102,9 +103,94 @@ eq('soft skill not named in resume caps at PARTIAL',
   tier({ tier: 'STRONG', evidence: 'Coordinated with cross-functional teams including Developers, BAs and Product Owners' }, 'Communication'),
   'PARTIAL');
 
-eq('NONE is trusted without examination',
+eq('NONE upheld when the skill really is absent',
   tier({ tier: 'NONE', evidence: 'Not found in resume.' }, 'Docker'),
   'NONE');
+
+// ── False negatives ────────────────────────────────────────────────────────────
+// This block replaces an assertion that read "NONE is trusted without examination".
+// That was the bug, pinned as a test: a JD asking for "Playwright or Cypress" against a
+// resume naming Cypress was scored NONE, because the model searched the pair as one
+// string. The summary in the SAME response said "strong experience with Cypress".
+const CYPRESS_RESUME = `
+QA Automation Engineer | Cypress • TypeScript • JavaScript | SDET
+Built and scaled Cypress automation frameworks for regression-critical flows.
+6 years of experience in automation testing and CI/CD integration.
+`;
+const cyTier = (row, skill) => deriveTier(row, skill, CYPRESS_RESUME);
+
+eq('alternation false-negative promoted to PARTIAL',
+  cyTier({ tier: 'NONE', evidence: 'Not found in resume.' }, 'Playwright or Cypress').tier,
+  'PARTIAL');
+eq('promotion is flagged as such',
+  cyTier({ tier: 'NONE', evidence: 'Not found in resume.' }, 'Playwright or Cypress').promoted,
+  true);
+eq('promotion replaces the "not found" evidence with the resume line',
+  /Cypress/.test(cyTier({ tier: 'NONE', evidence: 'Not found in resume.' }, 'Playwright or Cypress').evidenceOverride || ''),
+  true);
+eq('promotion records its reason',
+  cyTier({ tier: 'NONE', evidence: 'Not found in resume.' }, 'Playwright or Cypress').reasons.length,
+  1);
+
+// Promotion tops out at PARTIAL. The resume proves the word is present; only the model
+// can judge depth, and it declined to.
+eq('promotion never reaches STRONG',
+  cyTier({ tier: 'NONE', evidence: 'Not found in resume.' }, 'Cypress').tier,
+  'PARTIAL');
+
+// The guard against over-promotion. skillMentioned matches these words scattered across
+// the resume, but promotion requires them ADJACENT — otherwise a genuine gap gets credit.
+eq('scattered words do NOT promote (needs a contiguous phrase)',
+  cyTier({ tier: 'NONE', evidence: 'Not found in resume.' }, 'Exposure to performance testing tools').tier,
+  'NONE');
+eq('scattered words: skillMentioned would have said yes',
+  skillMentioned('automation testing experience', CYPRESS_RESUME), true);
+eq('...but the phrase check says no',
+  skillPhraseInResume('automation testing experience', CYPRESS_RESUME).found, false);
+eq('genuinely absent skill stays NONE',
+  cyTier({ tier: 'NONE', evidence: 'Not found in resume.' }, 'Kubernetes').tier, 'NONE');
+
+console.log('\n=== phrase matching: punctuation and word boundaries ===');
+eq('punctuation between words tolerated',
+  skillPhraseInResume('CI/CD integration', CYPRESS_RESUME).found, true);
+eq('substring of a longer word does not count',
+  skillPhraseInResume('press', CYPRESS_RESUME).found, false);
+eq('phrase must be in order',
+  skillPhraseInResume('frameworks Cypress automation', CYPRESS_RESUME).found, false);
+
+console.log('\n=== summary vs evidence: the contradiction the UI showed ===');
+const CONTRADICTING = 'The candidate has strong experience with Cypress and TypeScript. ' +
+  'They have also demonstrated expertise in automation testing.';
+const noneRows = [{ skill: 'Cypress', tier: 'NONE' }, { skill: 'Kubernetes', tier: 'NONE' }];
+
+eq('summary asserting a NONE skill is flagged',
+  findSummaryContradictions(CONTRADICTING, noneRows).map(c => c.skill), ['Cypress']);
+eq('the offending sentence is captured, not the whole summary',
+  findSummaryContradictions(CONTRADICTING, noneRows)[0].sentence,
+  'The candidate has strong experience with Cypress and TypeScript.');
+
+// An accurate summary NAMES absent skills to report them missing. That agrees with the
+// tiers and must not be flagged, or every honest summary trips the warning.
+eq('negated mention is not a contradiction',
+  findSummaryContradictions('However, they lack Kubernetes and blockchain testing experience.', noneRows),
+  []);
+eq('"does not have" is not a contradiction',
+  findSummaryContradictions('The candidate does not have Cypress exposure.', noneRows), []);
+eq('no NONE rows -> nothing to contradict',
+  findSummaryContradictions(CONTRADICTING, [{ skill: 'Cypress', tier: 'STRONG' }]), []);
+eq('empty summary -> no contradictions', findSummaryContradictions('', noneRows), []);
+
+console.log('\n=== coverage sentence is derived, so it cannot disagree ===');
+const cov = computeMatchScore({
+  mandatoryRows: [{ tier: 'STRONG', credit: 1 }, { tier: 'PARTIAL', credit: 0.5 }, { tier: 'NONE', credit: 0 }],
+  goodToHaveRows: [{ tier: 'NONE', credit: 0 }],
+});
+eq('coverage sentence counts every tier',
+  coverageSentence(cov.breakdown),
+  'Mandatory: 1 strong, 1 partial, 1 not evidenced (of 3). Good-to-have: 0 strong, 0 partial, 1 not evidenced (of 1).');
+eq('no skills -> says so',
+  coverageSentence(computeMatchScore({ mandatoryRows: [], goodToHaveRows: [] }).breakdown),
+  'No skills were available to evaluate.');
 
 eq('legacy matched:true is graded, not trusted',
   tier({ matched: true, evidence: 'Java, Selenium WebDriver, TestNG, Maven' }, 'Maven'),
@@ -135,9 +221,21 @@ const rec = reconcileRows(requested, [
 
 eq('every requested skill produces a row', rec.rows.length, 3);
 eq('omitted skill reported', rec.missing, ['Selenium WebDriver']);
-eq('omitted skill scored NONE', rec.rows[1].tier, 'NONE');
-eq('omitted skill says so in evidence',
-  rec.rows[1].evidence, 'The screening model did not report this skill.');
+// The model never reported "Selenium WebDriver", but the resume's skills line names it
+// verbatim, so the promotion applies: PARTIAL, not NONE. Scoring it 0 would penalise the
+// candidate for the model's omission.
+eq('omitted skill the resume names -> PARTIAL, not 0', rec.rows[1].tier, 'PARTIAL');
+eq('omitted-and-promoted evidence states BOTH facts',
+  rec.rows[1].evidence.startsWith('The screening model did not report this skill, but the resume names it:'),
+  true);
+eq('omission still recorded in the audit', rec.rows[1].audit.reported_by_model, false);
+
+// A skill the model omitted that the resume genuinely lacks stays at zero.
+const recAbsent = reconcileRows(
+  [{ skill: 'Kubernetes Orchestration', source: 'jd' }], [], RESUME);
+eq('omitted skill absent from the resume -> NONE', recAbsent.rows[0].tier, 'NONE');
+eq('omitted absent skill says the model skipped it',
+  recAbsent.rows[0].evidence, 'The screening model did not report this skill.');
 eq('unrequested row discarded', rec.extra, ['astrology']);
 eq('row order follows the request', rec.rows.map(r => r.skill),
   ['Playwright', 'Selenium WebDriver', 'Kubernetes']);

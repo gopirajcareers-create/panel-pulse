@@ -371,9 +371,46 @@ export default function CandidateResultsPage() {
             {/* Screening summary card */}
             <div className="lg:col-span-2 bg-bg-card rounded-xl border border-white/[0.06] p-5">
               <h3 className="text-xs font-bold uppercase tracking-widest text-orange-500 mb-3">Screening Summary</h3>
+
+              {/* Derived from the skill tiers, so it cannot contradict them. Placed FIRST
+                  because the prose below is the model's and has been seen to disagree with
+                  the rows — the reader should meet the countable statement first. */}
+              {analysis.coverageSummary && (
+                <p className="text-xs text-text-primary leading-relaxed bg-white/[0.02] border border-white/[0.06] px-4 py-2.5 rounded-lg mb-3 font-medium">
+                  {analysis.coverageSummary}
+                </p>
+              )}
+
               <p className="text-sm text-text-secondary leading-relaxed bg-white/[0.01] border border-white/[0.04] p-4 rounded-lg italic">
                 "{analysis.screeningSummary}"
               </p>
+
+              {/* The summary is free text the model writes alongside the tiers, and it has
+                  claimed a skill the same run scored NONE — "strong experience with Cypress"
+                  over a Cypress row reading "Not found in resume". The conflict is named
+                  rather than the prose silently edited, so the reader knows which clause to
+                  distrust and the skill rows stay the authority. */}
+              {analysis.summaryContradictions && analysis.summaryContradictions.length > 0 && (
+                <div className="mt-3 bg-amber-500/[0.07] border border-amber-500/25 rounded-lg p-3.5">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <p className="text-xs font-bold text-amber-300">Summary conflicts with the evidence</p>
+                  </div>
+                  <p className="text-[11px] text-amber-200/70 leading-relaxed mb-2">
+                    The wording above claims {analysis.summaryContradictions.length === 1 ? 'a skill' : 'skills'} that
+                    the skill checks below found no resume evidence for. Trust the skill rows — the
+                    score is computed from those, not from this text.
+                  </p>
+                  <ul className="space-y-1">
+                    {analysis.summaryContradictions.map((c, i) => (
+                      <li key={i} className="text-[11px] text-amber-200/90 leading-relaxed">
+                        <span className="font-bold">{c.skill}</span> — scored as not evidenced, yet the
+                        summary says: <span className="italic">"{c.sentence}"</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
 
@@ -802,6 +839,9 @@ function SkillMatchItem({ row }: { row: SkillMatchRow }) {
   const tier = tierOf(row);
   const style = TIER_STYLE[tier];
   const demotion = row.audit?.demoted ? row.audit.demotion_reasons : null;
+  // A promotion is the opposite correction: the model said absent, the resume says
+  // otherwise. Shown in emerald, not amber — nothing was taken away from the candidate.
+  const promotion = row.audit?.promoted ? row.audit.demotion_reasons : null;
 
   return (
     <div className="bg-white/[0.01] border border-white/[0.04] p-3.5 rounded-lg flex items-start gap-3.5">
@@ -827,6 +867,11 @@ function SkillMatchItem({ row }: { row: SkillMatchRow }) {
         {demotion && demotion.length > 0 && (
           <p className="text-[11px] text-amber-400/70 mt-1.5 leading-relaxed">
             Downgraded from {row.audit!.claimed_tier}: {demotion.join('; ')}.
+          </p>
+        )}
+        {promotion && promotion.length > 0 && (
+          <p className="text-[11px] text-emerald-400/80 mt-1.5 leading-relaxed">
+            Corrected upward: {promotion.join('; ')}.
           </p>
         )}
       </div>

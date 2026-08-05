@@ -118,6 +118,13 @@ export interface SkillMatchRow {
   audit?: {
     claimed_tier: SkillTier;
     demoted: boolean;
+    /**
+     * true when the model reported the skill as absent but the resume names it verbatim,
+     * so the row was raised NONE → PARTIAL. Distinct from `demoted` because it means the
+     * model produced a FALSE NEGATIVE, which is the reader's cue that the model's other
+     * negatives on this run deserve a second look.
+     */
+    promoted?: boolean;
     demotion_reasons: string[];
     grounding_ratio: number;
     skill_named_in_resume: boolean;
@@ -205,6 +212,17 @@ export interface PipelineDetail {
       matchScore: number | null;
       experienceMatch: string;
       status: 'Eligible' | 'Partially Eligible' | 'Ineligible' | 'Not Screenable';
+      /**
+       * Tier census derived in code from the skill rows, so it cannot disagree with them
+       * the way screeningSummary (free model prose) can.
+       */
+      coverageSummary?: string;
+      /**
+       * Sentences of screeningSummary that assert a skill scored NONE. The model wrote
+       * "strong experience with Cypress" above a Cypress row reading "Not found in
+       * resume"; this is that conflict, made explicit instead of left for the reader.
+       */
+      summaryContradictions?: Array<{ skill: string; sentence: string }>;
       /** Optional: records screened before the tiered rubric carry none of these. */
       scoreBreakdown?: ScoreBreakdown;
       skillsProvenance?: SkillsProvenance;

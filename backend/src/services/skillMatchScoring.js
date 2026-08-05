@@ -167,6 +167,62 @@ function skillMentioned(skill, resumeText) {
 }
 
 /**
+ * Find the skill named as a CONTIGUOUS phrase in the resume, with a real quote.
+ *
+ * Deliberately stricter than skillMentioned, and used for the opposite purpose.
+ * skillMentioned matches tokens anywhere in the resume, which is safe when capping a
+ * claim the model already made — a false positive there only permits a tier the model
+ * asked for. Overturning a NONE is different: a false positive invents a match, so it
+ * demands an unambiguous hit.
+ *
+ * "Exposure to performance testing tools" has its four words scattered across almost
+ * any QA resume and must NOT promote; "Cypress" appearing literally must. Requiring
+ * adjacency separates the two.
+ *
+ * Words may be separated by any punctuation, so "CI/CD Pipelines" matches "CI-CD
+ * pipelines". Alternation branches are tried separately: "Playwright or Cypress" is
+ * satisfied by either name alone.
+ *
+ * @param {string} skill
+ * @param {string} resumeText — the FULL resume
+ * @returns {{found: boolean, phrase: string|null, snippet: string|null}}
+ */
+function skillPhraseInResume(skill, resumeText) {
+  const text = String(resumeText || '');
+  if (!text.trim()) return { found: false, phrase: null, snippet: null };
+
+  const branches = String(skill || '').split(ALTERNATION_SPLIT).filter(b => b.trim());
+  for (const branch of branches.length ? branches : [skill]) {
+    const tokens = significantTokens(branch);
+    // No distinctive words (e.g. "QA", "UI") — nothing here is safe to promote on.
+    if (!tokens.length) continue;
+
+    // Match in the branch's own word order, not the de-duplicated token order.
+    const ordered = normalizeForMatch(branch).split(' ').filter(w => w.length > 2 && !STOPWORDS.has(w));
+    if (!ordered.length) continue;
+
+    const escaped = ordered.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    // Bounded on both sides so "cypress" does not match inside a longer word.
+    const re = new RegExp(`(?<![a-z0-9])${escaped.join('[^a-z0-9]{1,3}')}(?![a-z0-9])`, 'i');
+    const hit = re.exec(text);
+    if (!hit) continue;
+
+    // Quote the surrounding line, so the promoted row carries real evidence rather
+    // than an assertion. Trimmed to a sentence-ish window around the hit.
+    const from = Math.max(0, text.lastIndexOf('\n', hit.index) + 1);
+    const lineEnd = text.indexOf('\n', hit.index);
+    const to = lineEnd === -1 ? text.length : lineEnd;
+    const line = text.slice(from, to).trim();
+    const snippet = line.length > 240
+      ? line.slice(Math.max(0, hit.index - from - 80), hit.index - from + 160).trim()
+      : line;
+
+    return { found: true, phrase: hit[0], snippet: snippet || hit[0] };
+  }
+  return { found: false, phrase: null, snippet: null };
+}
+
+/**
  * What fraction of the quote's distinctive words actually occur in the resume?
  *
  * This is the anti-invention check. A model asked for verbatim evidence sometimes
@@ -248,13 +304,26 @@ function coerceClaimedTier(row) {
  * Decide a skill's final tier from the model's claim plus the resume text.
  *
  * Demotions, in order of severity:
- *   claim is NONE            → NONE, unexamined. Negatives are trusted.
  *   quote absent             → NONE. A match with no evidence is not a match.
  *   quote not in the resume  → NONE. Invented evidence supports nothing.
  *   skill name absent        → PARTIAL ceiling. The evidence is real but the skill
  *                              is inferred from it, which is not a firm match.
  *   no context markers       → PARTIAL ceiling. Named, but only named.
  *   reads as a skills list   → PARTIAL ceiling. Familiarity, not demonstrated use.
+ *
+ * One PROMOTION, and only one: a NONE claim is overturned to PARTIAL when the skill is
+ * named verbatim in the resume. Negatives used to be returned unexamined on the grounds
+ * that a model declining to find evidence cannot inflate a score — true, but it makes
+ * every check one-directional, and a false NONE costs the candidate a full 70/N.
+ *
+ * The case that forced this: a JD asking for "Playwright or Cypress" against a resume
+ * headed "QA Automation Engineer | Cypress" was scored NONE, because the model searched
+ * the pair as one string, found no Playwright, and answered no. Meanwhile the summary it
+ * wrote in the same response said "strong experience with Cypress" — the screening
+ * contradicting itself on one screen.
+ *
+ * PARTIAL, not STRONG, because all this establishes is that the word is present; the
+ * model's own reading of the context is not available to replace.
  *
  * @param {object} row — the model's row for one skill
  * @param {string} skill
@@ -266,8 +335,11 @@ function deriveTier(row, skill, resumeText) {
   const claimedTier = coerceClaimedTier(row);
   const quote = String(row?.evidence ?? row?.quote ?? '').trim();
 
+  const phrase = skillPhraseInResume(skill, resumeText);
   const signals = {
     skill_named_in_resume: skillMentioned(skill, resumeText),
+    skill_phrase_in_resume: phrase.found,
+    matched_phrase: phrase.phrase,
     grounding: groundingRatio(quote, resumeText),
     has_context_markers: hasContextMarkers(quote),
     looks_like_skills_list: looksLikeSkillsList(quote),
@@ -278,7 +350,25 @@ function deriveTier(row, skill, resumeText) {
   let tier = claimedTier;
 
   if (claimedTier === 'NONE') {
-    return { tier: 'NONE', claimedTier, credit: 0, demoted: false, reasons, signals };
+    // The one place a claim is raised rather than cut. See the header note.
+    if (phrase.found) {
+      return {
+        tier: 'PARTIAL',
+        claimedTier,
+        credit: TIER_CREDIT.PARTIAL,
+        demoted: false,
+        promoted: true,
+        reasons: [
+          `the model reported this skill as absent, but "${phrase.phrase}" appears ` +
+          `verbatim in the resume — raised to PARTIAL on the resume text`,
+        ],
+        // Substituted so the row shows the resume line that overturned the claim
+        // instead of "Not found in resume." beside a PARTIAL tier.
+        evidenceOverride: phrase.snippet,
+        signals,
+      };
+    }
+    return { tier: 'NONE', claimedTier, credit: 0, demoted: false, promoted: false, reasons, signals };
   }
 
   if (!quote) {
@@ -310,6 +400,7 @@ function deriveTier(row, skill, resumeText) {
     claimedTier,
     credit: TIER_CREDIT[tier],
     demoted: tier !== claimedTier,
+    promoted: false,
     reasons,
     signals,
   };
@@ -362,11 +453,23 @@ function reconcileRows(requested, rows, resumeText) {
       // carries the nuance, and flipping it to false would understate the candidate
       // everywhere the boolean is still consumed.
       matched: verdict.tier !== 'NONE',
-      evidence: evidence || (row ? 'Not found in resume.' : 'The screening model did not report this skill.'),
+      // A promoted row must not keep the model's "Not found in resume." beside a PARTIAL
+      // tier — that is the same self-contradiction the promotion exists to remove. The
+      // override is the resume line that overturned the claim.
+      //
+      // When the model omitted the row entirely, both facts are stated: the skill went
+      // unexamined AND the resume names it. Dropping either half misleads — the first
+      // would hide a compliance failure, the second would score a present skill as absent.
+      evidence: verdict.evidenceOverride
+        ? (row
+          ? verdict.evidenceOverride
+          : `The screening model did not report this skill, but the resume names it: ${verdict.evidenceOverride}`)
+        : evidence || (row ? 'Not found in resume.' : 'The screening model did not report this skill.'),
       credit: verdict.credit,
       audit: {
         claimed_tier: verdict.claimedTier,
         demoted: verdict.demoted,
+        promoted: Boolean(verdict.promoted),
         demotion_reasons: verdict.reasons,
         reported_by_model: Boolean(row),
         ...verdict.signals,
@@ -376,6 +479,78 @@ function reconcileRows(requested, rows, resumeText) {
 
   const extra = [...byName.keys()].filter(k => !consumed.has(k));
   return { rows: reconciled, missing, extra };
+}
+
+// Negation cues. A summary sentence carrying one of these near a skill name is
+// reporting the skill's ABSENCE, which agrees with a NONE tier rather than contradicting
+// it: "they lack blockchain testing" must not be read as a claim of blockchain testing.
+const NEGATION_PATTERNS = [
+  /\b(?:lacks?|lacking|no|not|non|never|without|missing|absent|absence|excludes?)\b/i,
+  /\b(?:does|did|do)\s+not\b/i,
+  /\b(?:limited|little|minimal|insufficient|unclear|unproven|unverified)\b/i,
+  /\b(?:gap|gaps|shortfall|weakness|weaknesses)\b/i,
+  /\bhowever\b/i,
+];
+
+/**
+ * Sentences in the summary that assert a skill the tiers scored NONE.
+ *
+ * The summary is free prose the model writes in the same response as the tiers, and
+ * nothing used to reconcile the two. That produced a screening arguing with itself on
+ * one screen: "The candidate has strong experience with Cypress" printed above a row
+ * reading "Playwright or Cypress — Not found in resume".
+ *
+ * Detection is per sentence, so an accurate "lacks blockchain testing" is not counted.
+ * Reported rather than rewritten: editing the model's prose in code risks changing a
+ * meaning nobody reviewed, whereas a flagged contradiction tells the reader exactly
+ * which clause not to trust.
+ *
+ * @param {string} summary
+ * @param {Array<{skill: string, tier: string}>} rows — graded rows, all buckets
+ * @returns {Array<{skill: string, sentence: string}>}
+ */
+function findSummaryContradictions(summary, rows) {
+  const text = String(summary || '').trim();
+  if (!text) return [];
+
+  const absent = (Array.isArray(rows) ? rows : []).filter(r => r?.tier === 'NONE');
+  if (!absent.length) return [];
+
+  const sentences = text.split(/(?<=[.!?])\s+/).filter(s => s.trim());
+  const found = [];
+
+  for (const row of absent) {
+    for (const sentence of sentences) {
+      // A negated sentence is consistent with NONE — that is the model agreeing.
+      if (NEGATION_PATTERNS.some(re => re.test(sentence))) continue;
+      const hit = skillPhraseInResume(row.skill, sentence);
+      if (hit.found) {
+        found.push({ skill: row.skill, sentence: sentence.trim() });
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * One sentence of coverage, computed from the tiers.
+ *
+ * Exists so the record always carries a fit statement that cannot disagree with the
+ * skill rows, whatever the model's prose does.
+ *
+ * @param {object} breakdown — computeMatchScore's breakdown
+ * @returns {string}
+ */
+function coverageSentence(breakdown) {
+  const part = (label, b) => b.skills > 0
+    ? `${label}: ${b.strong} strong, ${b.partial} partial, ${b.none} not evidenced (of ${b.skills})`
+    : null;
+  const parts = [
+    part('Mandatory', breakdown.mandatory),
+    part('Good-to-have', breakdown.goodToHave),
+  ].filter(Boolean);
+  return parts.length ? `${parts.join('. ')}.` : 'No skills were available to evaluate.';
 }
 
 /**
@@ -476,10 +651,13 @@ function computeMatchScore({ mandatoryRows = [], goodToHaveRows = [] }) {
 module.exports = {
   computeMatchScore,
   reconcileRows,
+  findSummaryContradictions,
+  coverageSentence,
   deriveTier,
   coerceClaimedTier,
   bucketFraction,
   skillMentioned,
+  skillPhraseInResume,
   groundingRatio,
   hasContextMarkers,
   looksLikeSkillsList,

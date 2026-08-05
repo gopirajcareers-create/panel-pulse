@@ -48,7 +48,12 @@
 const { callLLMWithMeta, promptCharBudget, NUM_CTX } = require('./llmClient');
 const { parseLLMJSON } = require('./jsonRepair');
 const { analyzeJD } = require('./jdAnalyzerService');
-const { computeMatchScore, reconcileRows } = require('./skillMatchScoring');
+const {
+  computeMatchScore,
+  reconcileRows,
+  findSummaryContradictions,
+  coverageSentence,
+} = require('./skillMatchScoring');
 
 // ─── Determinism ─────────────────────────────────────────────────────────────
 // Same rationale and default as L1/L2, so all three stages are reproducible on the
@@ -436,6 +441,13 @@ async function runScreening({ jobId, candidateName = '', jdText = '', resumeText
       console.log(`[Screening] "${row.skill}" demoted ${row.audit.claimed_tier} → ${row.tier}: ` +
         `${row.audit.demotion_reasons.join('; ')}`);
     }
+    // Logged as loudly as demotions: a promotion means the model returned a false
+    // negative, which is the failure mode that had a resume headed "Cypress" scored
+    // as having no Cypress.
+    for (const row of result.rows.filter(r => r.audit.promoted)) {
+      console.warn(`[Screening] "${row.skill}" PROMOTED NONE → ${row.tier}: ` +
+        `${row.audit.demotion_reasons.join('; ')}`);
+    }
   }
 
   // ── Step 4: Compute the score in code ────────────────────────────────────
@@ -448,6 +460,20 @@ async function runScreening({ jobId, candidateName = '', jdText = '', resumeText
     `(${breakdown.formula}) model=${llmResult.model}@${llmResult.modelDigest || 'unknown'} ` +
     `promptTokens=${llmResult.promptTokens} outputTokens=${llmResult.outputTokens}`);
 
+  // ── Step 5: Does the model's prose agree with the tiers it reported? ──────
+  // The summary is free text generated in the same response as the rows, and nothing
+  // reconciled the two — so the page could show "strong experience with Cypress" above
+  // a Cypress row reading "Not found in resume". Flagged, not rewritten: the reader is
+  // told which sentence conflicts with the evidence rather than having the prose
+  // silently edited on their behalf.
+  const allRows = [...mandatoryResult.rows, ...goodToHaveResult.rows];
+  const summaryText = String(raw.screeningSummary || '').trim() || 'No summary was produced.';
+  const contradictions = findSummaryContradictions(summaryText, allRows);
+  for (const c of contradictions) {
+    console.warn(`[Screening] Summary contradicts the evidence for "${c.skill}" ` +
+      `(scored NONE): "${c.sentence}"`);
+  }
+
   const analysis = {
     // Skill names, kept flat because generate-l1-questions and Stage 4's audit prompt
     // already read these keys.
@@ -458,8 +484,15 @@ async function runScreening({ jobId, candidateName = '', jdText = '', resumeText
     mandatorySkillsMatch: mandatoryResult.rows,
     additionalSkillsMatch: goodToHaveResult.rows,
 
-    screeningSummary: String(raw.screeningSummary || '').trim() || 'No summary was produced.',
+    screeningSummary: summaryText,
     experienceMatch: String(raw.experienceMatch || '').trim() || 'Experience comparison was not reported.',
+
+    // Derived from the tiers, so this line can never disagree with the skill rows no
+    // matter what the model's prose says. The UI leads with it.
+    coverageSummary: coverageSentence(breakdown),
+    // Sentences of screeningSummary that assert a skill scored NONE. Empty on a
+    // consistent run; the UI warns when it is not.
+    summaryContradictions: contradictions,
 
     matchScore,
     status,

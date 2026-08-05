@@ -173,6 +173,27 @@ function reportScreening(old, fresh) {
     }
   }
 
+  // Promotions are model FALSE NEGATIVES. Worth reading closely: a run with several means
+  // the model was answering the skill list badly, not that the candidate improved.
+  const promoted = rows(fresh).filter(r => r.audit?.promoted);
+  if (promoted.length) {
+    console.log(`\nPromotions (${promoted.length}) — the model said absent, the resume disagrees:`);
+    for (const r of promoted) {
+      console.log(`  ${r.skill}: NONE → ${r.tier} — ${r.audit.demotion_reasons.join('; ')}`);
+    }
+  }
+
+  const conflicts = fresh.summaryContradictions || [];
+  if (conflicts.length) {
+    console.log(`\n⚠️  Summary contradicts the evidence (${conflicts.length}) — the prose claims ` +
+      `skills scored NONE in the same run:`);
+    for (const c of conflicts) {
+      console.log(`  ${c.skill}: "${c.sentence}"`);
+    }
+  }
+
+  if (fresh.coverageSummary) console.log(`\nCoverage (derived from tiers): ${fresh.coverageSummary}`);
+
   if (AUDIT) {
     console.log('\n=== EVIDENCE AUDIT (what each tier was derived from) ===');
     for (const r of rows(fresh)) {
@@ -180,8 +201,8 @@ function reportScreening(old, fresh) {
       console.log(`  evidence: ${String(r.evidence || '').replace(/\s+/g, ' ').slice(0, 160)}`);
       const a = r.audit || {};
       console.log(`  claimed=${a.claimed_tier} grounding=${a.grounding_ratio} ` +
-        `named_in_resume=${a.skill_named_in_resume} context_markers=${a.has_context_markers} ` +
-        `bare_list=${a.looks_like_skills_list}`);
+        `named_in_resume=${a.skill_named_in_resume} phrase_in_resume=${a.skill_phrase_in_resume} ` +
+        `context_markers=${a.has_context_markers} bare_list=${a.looks_like_skills_list}`);
     }
   }
 

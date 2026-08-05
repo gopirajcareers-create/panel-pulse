@@ -216,6 +216,64 @@ describe('CandidateResultsPage', () => {
     expect(banner.textContent).toMatch(/unverified rather than\s+as confirmed gaps/);
   });
 
+  // The reported contradiction: the summary said "strong experience with Cypress" while the
+  // Cypress row below it read "Not found in resume". The rows are the authority because the
+  // score is computed from them, so the prose is what gets flagged.
+  it('flags a summary sentence that claims a skill scored as not evidenced', async () => {
+    await renderPage(baseDetail({
+      ...TIERED,
+      screeningSummary: 'The candidate has strong experience with Cypress and TypeScript. '
+        + 'However, they lack Kubernetes exposure.',
+      summaryContradictions: [{
+        skill: 'Cypress',
+        sentence: 'The candidate has strong experience with Cypress and TypeScript.',
+      }],
+    }));
+
+    expect(screen.getByText('Summary conflicts with the evidence')).toBeTruthy();
+    expect(screen.getByText(/Trust the skill rows/i)).toBeTruthy();
+    // The specific sentence is quoted, so the reader knows which clause is unsupported
+    // rather than being told the whole summary is suspect.
+    expect(screen.getByText(/"The candidate has strong experience with Cypress and TypeScript."/)).toBeTruthy();
+  });
+
+  it('does not warn when the summary agrees with the tiers', async () => {
+    await renderPage(baseDetail(TIERED));   // no summaryContradictions
+    expect(screen.queryByText('Summary conflicts with the evidence')).toBeNull();
+  });
+
+  it('leads with a coverage line derived from the tiers', async () => {
+    await renderPage(baseDetail({
+      ...TIERED,
+      coverageSummary: 'Mandatory: 1 strong, 1 partial, 1 not evidenced (of 3). Good-to-have: 1 strong, 0 partial, 0 not evidenced (of 1).',
+    }));
+    // Counts match the TIERED fixture's rows exactly — that is the point of deriving it.
+    expect(screen.getByText(/Mandatory: 1 strong, 1 partial, 1 not evidenced \(of 3\)/)).toBeTruthy();
+  });
+
+  // A promotion means the model returned a FALSE NEGATIVE — it reported the skill absent
+  // and the resume names it verbatim. Shown distinctly from a downgrade: nothing was taken
+  // away from the candidate here.
+  it('explains a row corrected upward from the model\'s "not found"', async () => {
+    await renderPage(baseDetail({
+      ...TIERED,
+      mandatorySkillsMatch: [{
+        skill: 'Playwright or Cypress', tier: 'PARTIAL', matched: true, credit: 0.5, source: 'jd',
+        evidence: 'QA Automation Engineer | Cypress • TypeScript • JavaScript | SDET',
+        audit: {
+          claimed_tier: 'NONE', demoted: false, promoted: true,
+          demotion_reasons: ['the model reported this skill as absent, but "Cypress" appears verbatim in the resume — raised to PARTIAL on the resume text'],
+          grounding_ratio: 1, skill_named_in_resume: true, has_context_markers: false,
+          looks_like_skills_list: false,
+        },
+      }],
+    }));
+
+    expect(screen.getByText(/Corrected upward: the model reported this skill as absent/i)).toBeTruthy();
+    // Must not read as a downgrade — the correction went the other way.
+    expect(screen.queryByText(/Downgraded from NONE/i)).toBeNull();
+  });
+
   it('shows prior screenings so a changed score can be compared', async () => {
     await renderPage(baseDetail(TIERED, {
       history: [
