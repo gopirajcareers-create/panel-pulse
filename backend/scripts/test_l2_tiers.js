@@ -28,6 +28,20 @@ function items(n, { depth = false, prefix = 't' } = {}) {
   }));
 }
 
+/**
+ * Evidence that clears the full-marks gate: more than 4 subjects, how/why probing on
+ * every one, and the first subject revisited with a deeper follow-up so a genuine
+ * chain exists. Full marks needs all three signals, so a fixture short of any one of
+ * them silently tests the 75% tier instead — which is how the handoff-cap cases below
+ * stopped exercising the cap at all.
+ */
+function fullMarksItems({ prefix = 't' } = {}) {
+  return [
+    ...items(5, { depth: true, prefix }),
+    { topic: `${prefix}0`, quote: `And why did you settle on that approach for ${prefix}0?` },
+  ];
+}
+
 /** Run the derivation over a fixture, filling unlisted dimensions with no evidence. */
 function derive(evidenceDetail, hasL1 = true) {
   const full = {};
@@ -50,10 +64,24 @@ for (const [dim, cfg] of Object.entries(L2_DIMENSIONS)) {
 
 console.log('\n=== tiers on the 2.0-max dimensions ===');
 eq('1 subject -> 0.5', derive({ 'Mandatory Skill Coverage': items(1) }).categories['Mandatory Skill Coverage'], 0.5);
-eq('2 subjects -> 1.0', derive({ 'Mandatory Skill Coverage': items(2) }).categories['Mandatory Skill Coverage'], 1.0);
-eq('3 subjects (yes/no) -> 1.5', derive({ 'Mandatory Skill Coverage': items(3) }).categories['Mandatory Skill Coverage'], 1.5);
-eq('3 subjects + depth -> 2.0',
-  derive({ 'Mandatory Skill Coverage': items(3, { depth: true }) }).categories['Mandatory Skill Coverage'], 2.0);
+eq('2 subjects -> 0.5', derive({ 'Mandatory Skill Coverage': items(2) }).categories['Mandatory Skill Coverage'], 0.5);
+eq('3 subjects (yes/no) -> 1.0', derive({ 'Mandatory Skill Coverage': items(3) }).categories['Mandatory Skill Coverage'], 1.0);
+eq('5 subjects (yes/no) -> 1.5 (breadth ceiling)',
+  derive({ 'Mandatory Skill Coverage': items(5) }).categories['Mandatory Skill Coverage'], 1.5);
+// 5 subjects each probed with how/why is the "sustained depth" route to full marks —
+// no revisited subject required, because the model does not reliably tag one.
+eq('5 subjects all depth-probed -> 2.0 (path A)',
+  derive({ 'Mandatory Skill Coverage': items(5, { depth: true }) }).categories['Mandatory Skill Coverage'], 2.0);
+// Fewer depth subjects needs the chain instead.
+eq('5 subjects, only 3 depth-probed, no chain -> 1.5',
+  derive({ 'Mandatory Skill Coverage': [...items(3, { depth: true }), ...items(2, { prefix: 'yn' })] })
+    .categories['Mandatory Skill Coverage'], 1.5);
+eq('5 subjects + 3 depth + a chain -> 2.0 (path B)',
+  derive({ 'Mandatory Skill Coverage': [...items(3, { depth: true }), ...items(2, { prefix: 'yn' }),
+    { topic: 't0', quote: 'And why did you settle on that for t0?' }] })
+    .categories['Mandatory Skill Coverage'], 2.0);
+eq('5 subjects + depth + a chain -> 2.0',
+  derive({ 'Mandatory Skill Coverage': fullMarksItems() }).categories['Mandatory Skill Coverage'], 2.0);
 eq('no evidence -> 0', derive({}).categories['Mandatory Skill Coverage'], 0);
 
 console.log('\n=== the 0.5-max / 3-step grids (Leadership, Behavioral) ===');
@@ -61,29 +89,33 @@ console.log('\n=== the 0.5-max / 3-step grids (Leadership, Behavioral) ===');
 // 0.375, which snapped DOWN to 0.25, so a panel probing three leadership subjects
 // scored identically to one probing a single subject.
 const lead1 = derive({ 'Leadership Evaluation': items(1) }).categories['Leadership Evaluation'];
-const lead3 = derive({ 'Leadership Evaluation': items(3) }).categories['Leadership Evaluation'];
+const lead5 = derive({ 'Leadership Evaluation': items(5) }).categories['Leadership Evaluation'];
 eq('1 subject -> 0.25', lead1, 0.25);
-eq('3 subjects -> 0.5 (NOT collapsed onto 0.25)', lead3, 0.5);
-eq('3 subjects outscore 1 subject', lead3 > lead1, true);
-eq('Behavioral 3 subjects -> 0.5',
-  derive({ 'Behavioral Assessment': items(3) }).categories['Behavioral Assessment'], 0.5);
+eq('5 subjects -> 0.5 (NOT collapsed onto 0.25)', lead5, 0.5);
+eq('5 subjects outscore 1 subject', lead5 > lead1, true);
+eq('Behavioral 5 subjects -> 0.5',
+  derive({ 'Behavioral Assessment': items(5) }).categories['Behavioral Assessment'], 0.5);
 eq('every score lands on its own grid',
   Object.entries(derive({
-    'Leadership Evaluation': items(3), 'Behavioral Assessment': items(2),
-    'Framework Knowledge': items(3, { depth: true }),
+    'Leadership Evaluation': items(5), 'Behavioral Assessment': items(2),
+    'Framework Knowledge': fullMarksItems({ prefix: 'fw' }),
   }).categories).every(([d, v]) => L2_DIMENSIONS[d].steps.includes(v)), true);
 
 console.log('\n=== Technical Depth counts depth-probing subjects only ===');
 eq('4 yes/no questions -> 0',
   derive({ 'Technical Depth': items(4) }).categories['Technical Depth'], 0);
-eq('3 how/why subjects -> 2.0',
-  derive({ 'Technical Depth': items(3, { depth: true }) }).categories['Technical Depth'], 2.0);
+eq('3 how/why subjects -> 1.0',
+  derive({ 'Technical Depth': items(3, { depth: true }) }).categories['Technical Depth'], 1.0);
+eq('5 how/why subjects + a chain -> 2.0',
+  derive({ 'Technical Depth': fullMarksItems({ prefix: 'design' }) }).categories['Technical Depth'], 2.0);
 eq('scored_on recorded',
   derive({ 'Technical Depth': items(3, { depth: true }) }).evidence_audit['Technical Depth'].scored_on,
   'depth_probing_topics');
 
 console.log('\n=== handoff cap when no L1 transcript exists ===');
-const strongHandoff = { [HANDOFF_DIMENSION]: items(4, { depth: true, prefix: 'claim' }) };
+// Must clear the full-marks gate, otherwise the derived score never exceeds the cap
+// and every assertion below passes vacuously without the cap ever running.
+const strongHandoff = { [HANDOFF_DIMENSION]: fullMarksItems({ prefix: 'claim' }) };
 const withL1 = derive(strongHandoff, true);
 const withoutL1 = derive(strongHandoff, false);
 eq('with L1: full marks reachable', withL1.categories[HANDOFF_DIMENSION], 2.0);
@@ -101,7 +133,7 @@ const weakHandoff = derive({ [HANDOFF_DIMENSION]: items(1) }, false);
 eq('score under the cap is untouched', weakHandoff.categories[HANDOFF_DIMENSION], 0.5);
 eq('...and not reported as capped', weakHandoff.scoring_warnings.capped_dimensions, []);
 eq('cap does not touch other dimensions',
-  derive({ 'Technical Depth': items(3, { depth: true }) }, false).categories['Technical Depth'], 2.0);
+  derive({ 'Technical Depth': fullMarksItems({ prefix: 'design' }) }, false).categories['Technical Depth'], 2.0);
 
 console.log('\n=== frontend contract + totals ===');
 const res = derive({
@@ -130,10 +162,10 @@ const legacy = _deriveScores({
     'Technical Depth': ['How would you scale the write path?'],
   },
 }, true);
-eq('bare strings count toward breadth', legacy.categories['Mandatory Skill Coverage'], 1.5);
+eq('bare strings count toward breadth', legacy.categories['Mandatory Skill Coverage'], 1.0);
 eq('untagged evidence flagged', legacy.scoring_warnings.untagged_evidence.length > 0, true);
 eq('model score divergence flagged', legacy.scoring_warnings.model_score_divergences.length > 0, true);
-eq('legacy total recomputed, not trusted', legacy.score, 2.0);
+eq('legacy total recomputed, not trusted', legacy.score, 1.5);
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`);
 process.exit(failures ? 1 : 0);

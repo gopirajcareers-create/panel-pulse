@@ -249,6 +249,12 @@ For EACH dimension:
                       Use the SAME topic string when several questions probe the
                       same subject, and DIFFERENT strings for different subjects.
                       This is what breadth is measured from, so it must be accurate.
+                      Do NOT give every question its own topic. Two questions about
+                      the same subject share one topic even when they ask different
+                      things about it: "How would you shard this?" and "And why that
+                      partition key?" are both topic "Kafka partitioning". Inventing
+                      a distinct topic per question misreports a panel that drilled
+                      into one subject as a panel that skimmed several.
      "probes_depth" — true if the question asks HOW, WHY, or WHAT IF, or otherwise
                       demands explanation. False for existence checks answerable
                       with yes/no ("Have you used Kafka?", "Do you know Redis?").
@@ -265,10 +271,12 @@ syntax. But report what was actually asked — do not withhold a question becaus
 was more junior than you expected of an L2 panel.
 
 How the score follows from your evidence (for your understanding — do not compute it):
-  - 1 subject probed        -> 25% of the dimension max
-  - 2 subjects              -> 50%
-  - more than 2 subjects    -> 75%
-  - that, plus a genuine follow-up chain -> 100%
+  - 1-2 subjects probed     -> 25% of the dimension max
+  - 3-4 subjects            -> 50%
+  - more than 4 subjects    -> 75%
+  - that, plus sustained depth -> 100% (deliberately rare): either how/why
+    probing on 5+ subjects, or on 3+ subjects with one of them revisited
+    for a deeper follow-up
 For "Technical Depth" only questions with probes_depth=true are counted, because
 that dimension measures explanation-seeking rather than coverage.
 

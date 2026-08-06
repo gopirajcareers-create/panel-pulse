@@ -16,10 +16,30 @@
  *
  * ── Tiers (as a fraction of the dimension max) ───────────────────────────────
  *   0 topics                            → 0
- *   1 topic                             → 25%
- *   2 topics                            → 50%
- *   >2 topics                           → 75%
- *   >2 topics + demonstrated depth      → 100%
+ *   1–2 topics                          → 25%
+ *   3–4 topics                          → 50%
+ *   >4 topics                           → 75%
+ *   >4 topics + demonstrated depth      → 100%
+ *
+ * ── Why full marks are hard ──────────────────────────────────────────────────
+ * The first version of this ladder put the breadth ceiling at >2 topics and opened
+ * the depth gate on EITHER one follow-up chain OR two how/why topics. Measured
+ * against real runs that made 10/10 routine: three topics plus two how-questions per
+ * dimension — an ordinary competent interview — scored 9/10, and the prompt asks the
+ * model for up to 8 evidence items per dimension, so the 3-topic bar was cleared
+ * almost every time. The scale had collapsed into a pass/fail check.
+ *
+ * Full marks now require breadth (>4 subjects) PLUS sustained depth, which is either
+ * how/why probing on 5+ subjects, or 3+ subjects with one of them revisited to drill
+ * deeper. A panel that covered a lot but explained-probed only two or three subjects
+ * gets 75%, the correct reading of "thorough but not exceptional". 10/10 means all six
+ * dimensions cleared that bar.
+ *
+ * Requiring a chain AND depth breadth was tried and reverted: over three live runs the
+ * model set follows_up=true on 0 of 28 items and gave every question a unique topic
+ * string, so chains came back 0 on 18 of 18 dimensions and full marks became
+ * unreachable rather than rare. Hence two routes, neither depending on a signal the
+ * evidence does not reliably carry.
  *
  * ── Mapping a tier onto a dimension's grid ───────────────────────────────────
  * The tier selects a POSITION in the dimension's `steps` array, not a fraction of
@@ -64,9 +84,15 @@
 // Fraction of the dimension max awarded per tier index.
 const TIER_FRACTIONS = [0, 0.25, 0.5, 0.75, 1.0];
 
-// Above this many distinct topics a dimension reaches the breadth ceiling (75%)
-// and only demonstrated depth can lift it further.
-const BREADTH_TIER_COUNT = 2;
+// Distinct topics per breadth tier: 1–2 topics -> 25%, 3–4 -> 50%, >4 -> 75%.
+// Above TOPICS_PER_TIER * 2 a dimension reaches the breadth ceiling and only
+// demonstrated depth can lift it further.
+//
+// Was 1 topic per tier (so 3 topics hit the ceiling), which made the top of the
+// scale reachable by any panel that asked three questions on a subject — see the
+// header note on why full marks are hard.
+const TOPICS_PER_TIER = 2;
+const BREADTH_TIER_COUNT = TOPICS_PER_TIER * 2;   // 4 — above this is the ceiling
 
 /**
  * Normalise a topic label for counting. Lowercased and stripped of punctuation so
@@ -139,8 +165,46 @@ const DEPTH_PATTERNS = [
   /\btell me about a\b/i,
 ];
 
+// Questions that match a DEPTH_PATTERN but probe nothing technical. "How many years
+// of experience do you have?" is a number lookup; "How are you today?" is a greeting;
+// "Describe your current CTC" is HR logistics. All three matched /\bhow\b/ or
+// /\bdescribe\b/ and counted as demonstrated depth, which is how a transcript of
+// pleasantries plus one repeated yes/no question reached 10/10.
+//
+// Checked BEFORE the depth patterns, so a non-technical question cannot buy depth
+// credit no matter how it is phrased.
+const NON_TECHNICAL_PATTERNS = [
+  /\bhow (?:are|have) you\b/i,                          // greetings
+  /\bhow(?:'s| is| are)? (?:the |your )?(?:audio|video|sound|connection|network)\b/i,
+  /\bcan you hear\b/i,
+  /\bhow many years?\b/i,                               // experience arithmetic
+  /\bhow (?:much|many) (?:years?|experience|notice|ctc|salary)\b/i,
+  /\b(?:current|expected) (?:ctc|salary|package|compensation)\b/i,
+  /\bnotice period\b/i,
+  /\b(?:why|reason) (?:are you |for )?(?:looking|leaving|change|changing|switch)/i,
+  /\bwhere are you (?:from|based|located)\b/i,
+  /\brelocat/i,
+  /\bintroduce yourself\b/i,
+  /\btell me about yourself\b/i,
+  /\bwalk (?:me|us) through your (?:resume|background|profile|cv)\b/i,
+  /\bhow (?:did|was) your (?:day|weekend|journey|travel)\b/i,
+];
+
 /**
- * Does this quote ask the candidate to EXPLAIN, rather than confirm?
+ * Is this question small talk, HR logistics, or an audio check rather than a
+ * technical probe?
+ *
+ * @param {string} quote
+ * @returns {boolean}
+ */
+function looksNonTechnical(quote) {
+  const text = String(quote || '');
+  return NON_TECHNICAL_PATTERNS.some(re => re.test(text));
+}
+
+/**
+ * Does this quote ask the candidate to EXPLAIN something technical, rather than
+ * confirm a fact or exchange pleasantries?
  *
  * @param {string} quote
  * @returns {boolean}
@@ -148,6 +212,8 @@ const DEPTH_PATTERNS = [
 function looksDepthProbing(quote) {
   const text = String(quote || '');
   if (!text.trim()) return false;
+  // Small talk and HR logistics are not depth, however they are phrased.
+  if (looksNonTechnical(text)) return false;
   return DEPTH_PATTERNS.some(re => re.test(text));
 }
 
@@ -180,10 +246,19 @@ function depthProbingTopics(items) {
  * Count follow-up chains: subjects the panel returned to with a question that
  * built on the candidate's previous answer.
  *
- * A chain requires either an explicit follows_up tag or two questions on the same
- * topic. Chains are what gate FULL marks — a boolean "depth_demonstrated" from the
- * model came back true on every dimension of a real record, including ones backed
- * only by yes/no questions, so full marks needs grounding in the evidence itself.
+ * A chain needs two questions on the same topic AND at least one of them probing
+ * how/why (or an explicit follows_up tag on a topic asked more than once). Bare
+ * repetition is not a chain: "Do you know JMeter?" followed by "So you have used
+ * JMeter?" is one yes/no check asked twice, and counting it as a chain was enough on
+ * its own to open the full-marks gate — the exact "three rephrasings of do you know
+ * JMeter" failure this module claims to have designed out of breadth, left open in
+ * depth.
+ *
+ * A chain is not required for full marks — see deriveTier, where it lowers the depth
+ * breadth needed rather than gating the tier. It cannot be required: the model sets
+ * follows_up on almost nothing and rarely repeats a topic string, so a mandatory chain
+ * closes the top tier entirely. When one IS present the bar is the panel visibly
+ * drilling in, not merely mentioning a subject twice.
  *
  * @param {Array<{quote?:string, topic?:string, follows_up?:boolean}>} items
  * @returns {number}
@@ -193,14 +268,19 @@ function followUpChains(items) {
   for (const item of items || []) {
     const topic = normalizeTopic(item?.topic) || `quote:${normalizeTopic(item?.quote).slice(0, 60)}`;
     if (!topic) continue;
-    const entry = perTopic.get(topic) || { count: 0, flagged: false };
+    const entry = perTopic.get(topic) || { count: 0, flagged: false, depth: false };
     entry.count++;
     if (item?.follows_up === true) entry.flagged = true;
+    // The model's probes_depth is honoured, but the quote text is the authority.
+    if (item?.probes_depth === true || looksDepthProbing(item?.quote)) entry.depth = true;
     perTopic.set(topic, entry);
   }
   let chains = 0;
-  for (const { count, flagged } of perTopic.values()) {
-    if (flagged || count >= 2) chains++;
+  for (const { count, flagged, depth } of perTopic.values()) {
+    // Revisited AND actually drilled into. A follows_up tag counts only when the
+    // subject really was raised more than once, so a mistagged one-shot question
+    // cannot manufacture a chain.
+    if (count >= 2 && (depth || flagged)) chains++;
   }
   return chains;
 }
@@ -225,10 +305,20 @@ function tierToStep(tierIndex, steps) {
   return grid[Math.min(Math.max(idx, 0), grid.length - 1)];
 }
 
-// Full marks require depth on at least this many distinct subjects (or one genuine
-// follow-up chain). Two rather than one: a single "how" question among yes/no
-// coverage is not the "more evidence + follow-ups + depth" tier.
-const DEPTH_TOPICS_FOR_FULL_MARKS = 2;
+// Full marks need the breadth ceiling PLUS depth, and there are two ways to show
+// depth. Either is exceptional; requiring both is not reachable.
+//
+// Path A — sustained depth without revisiting: how/why probing across this many
+// distinct subjects. The bar is high because one-shot explanation questions are the
+// common case, so this must mean "asked the candidate to explain nearly everything
+// raised", not "asked two how-questions".
+const DEPTH_TOPICS_ALONE_FOR_FULL_MARKS = 5;
+// Path B — the panel returned to a subject and drilled deeper. Rarer and stronger
+// evidence of probing skill, so it needs less depth breadth alongside it.
+const DEPTH_TOPICS_WITH_CHAIN_FOR_FULL_MARKS = 3;
+const CHAINS_FOR_FULL_MARKS = 1;
+// Kept as the documented name for path B's threshold.
+const DEPTH_TOPICS_FOR_FULL_MARKS = DEPTH_TOPICS_WITH_CHAIN_FOR_FULL_MARKS;
 
 /**
  * Derive the tier index for a dimension.
@@ -251,20 +341,37 @@ function deriveTier(units, { chains = 0, depthTopics = 0 } = {}) {
     return { tierIndex: 0, fraction: 0, topTierGranted: false, topTierDenied: false, denialReason: null };
   }
 
-  // Breadth alone tops out at 75%: 1 unit -> 25%, 2 -> 50%, >2 -> 75%.
-  const breadthIndex = units > BREADTH_TIER_COUNT ? 3 : units;
+  // Breadth alone tops out at 75%: 1–2 units -> 25%, 3–4 -> 50%, >4 -> 75%.
+  const breadthIndex = units > BREADTH_TIER_COUNT
+    ? 3
+    : Math.ceil(units / TOPICS_PER_TIER);
   const breadthOk = breadthIndex === 3;
 
-  // Depth is demonstrated by either drilling into one subject repeatedly (a chain)
-  // or asking explanation-seeking questions across several subjects.
-  const depthOk = chains >= 1 || depthTopics >= DEPTH_TOPICS_FOR_FULL_MARKS;
+  // Two routes to demonstrated depth. Requiring BOTH a chain and depth breadth made
+  // full marks unreachable rather than rare: measured over live runs, the model set
+  // follows_up=true on 0 of 28 evidence items and gave every question its own topic
+  // string, so `chains` was 0 on 18 of 18 dimensions. A requirement the evidence
+  // never satisfies is not a high bar, it is a dead branch — the same trap the header
+  // records for depth_demonstrated.
+  const chainsOk = chains >= CHAINS_FOR_FULL_MARKS;
+  const depthOk = chainsOk
+    ? depthTopics >= DEPTH_TOPICS_WITH_CHAIN_FOR_FULL_MARKS   // path B: revisited a subject
+    : depthTopics >= DEPTH_TOPICS_ALONE_FOR_FULL_MARKS;       // path A: sustained explanation-seeking
   const granted = breadthOk && depthOk;
 
   let denialReason = null;
   if (!granted) {
-    if (!breadthOk && !depthOk) denialReason = 'breadth and depth both short of full marks';
-    else if (!breadthOk) denialReason = 'insufficient breadth';
-    else denialReason = 'no how/why depth probing in evidence';
+    // Name every missing requirement, not just the first: "we went deep, why not
+    // 2/2?" is the panel's question and a partial answer invites a second round.
+    const missing = [];
+    if (!breadthOk) missing.push(`breadth (${units} of ${BREADTH_TIER_COUNT + 1}+ subjects)`);
+    if (!depthOk) {
+      missing.push(chainsOk
+        ? `how/why probing on ${DEPTH_TOPICS_WITH_CHAIN_FOR_FULL_MARKS}+ subjects (${depthTopics})`
+        : `how/why probing on ${DEPTH_TOPICS_ALONE_FOR_FULL_MARKS}+ subjects (${depthTopics}), ` +
+          `or ${DEPTH_TOPICS_WITH_CHAIN_FOR_FULL_MARKS}+ plus a subject revisited with a deeper follow-up`);
+    }
+    denialReason = `short of full marks: ${missing.join('; ')}`;
   }
 
   const tierIndex = granted ? 4 : breadthIndex;
@@ -376,12 +483,17 @@ module.exports = {
   coerceEvidenceItems,
   deriveTier,
   looksDepthProbing,
+  looksNonTechnical,
   tierToStep,
   distinctTopics,
   followUpChains,
   depthProbingTopics,
   normalizeTopic,
   TIER_FRACTIONS,
+  TOPICS_PER_TIER,
   BREADTH_TIER_COUNT,
   DEPTH_TOPICS_FOR_FULL_MARKS,
+  DEPTH_TOPICS_ALONE_FOR_FULL_MARKS,
+  DEPTH_TOPICS_WITH_CHAIN_FOR_FULL_MARKS,
+  CHAINS_FOR_FULL_MARKS,
 };
