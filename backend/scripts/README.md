@@ -93,6 +93,42 @@ was counted from, so the number can be recomputed by hand.
 
 ---
 
+### backfill_rubric.js
+
+**Purpose:** Re-derive **every** stored L1/L2 score under the current rubric and write
+it back, so one dashboard column stops mixing two rubrics.
+**Dry run by default** — pass `--write` to persist.
+
+```bash
+node scripts/backfill_rubric.js --stage l1            # preview the deltas
+node scripts/backfill_rubric.js --stage both --write
+```
+
+- `--stage l1|l2|both` (default `l1`)
+- `--verbose` also lists the records that were already current.
+
+**Why it needs no LLM call:** scores derive from stored evidence in code, so the whole
+collection re-derives in one pass. That is the difference from `rescore.js`, which
+re-runs the *model* for one candidate — right for "did the evidence change?", far too
+slow for "make the column comparable".
+
+**What it does not fix:** it corrects for **rubric** changes only. A record whose
+evidence was under-reported by an older *prompt* or a different model stays
+under-reported — that needs `rescore.js`. Records carrying no tagged evidence (scored
+before the tier rubric) are skipped and listed rather than written as 0.0.
+
+Prior scores, their `rubric_version` and model provenance are appended to
+`stage2.history` / `stage3.history` before the overwrite, following the same convention
+as Stage 1's `appendScreeningHistory` — "the score changed" cannot be answered after
+overwriting the number being complained about. Re-running is idempotent: a record
+already at the current rubric whose score does not move is left untouched.
+
+Run `score_distribution.js` first to see the shape of the change, and note which
+database `.env` points at — the script prints it, because prod and dev share the
+collection name.
+
+---
+
 ### verify_determinism.js
 
 **Purpose:** Prove identical input still produces an identical score. Calls the real
