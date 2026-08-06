@@ -27,6 +27,38 @@ function _startsValue(ch) {
 }
 
 /**
+ * Does a JSON KEY start at `i` — that is, `"..."` followed by `:`?
+ *
+ * This is what disambiguates the `", "` sequence, which is otherwise identical in the
+ * two cases that matter:
+ *
+ *     {"a": "said "yes", "b": "next"}          <- `"` after yes CLOSES the value
+ *     {"a": "between "struct", "class" here"}  <- `"` after struct is EMBEDDED
+ *
+ * Both are quote-comma-quote. The difference is only visible further ahead: a real
+ * next key is followed by a colon, whereas `"class"` is followed by prose. Without
+ * this lookahead the comma rule accepted `"` as a terminator via _startsValue and
+ * closed the string early, so the rest of the document was reinterpreted as keys —
+ * which is how a C++ transcript quoting  "struct", "class" and "union"  failed with
+ * `Expected ',' or '}' after property value`.
+ *
+ * Scans the quoted token respecting backslash escapes, so an escaped quote inside the
+ * candidate key cannot end the scan prematurely.
+ */
+function _keyStartsAt(src, i) {
+  if (src[i] !== '"') return false;
+  for (let p = i + 1; p < src.length; p++) {
+    if (src[p] === '\\') { p++; continue; }
+    if (src[p] === '"') {
+      let q = p + 1;
+      while (q < src.length && /\s/.test(src[q])) q++;
+      return src[q] === ':';
+    }
+  }
+  return false;                              // unterminated — not a key
+}
+
+/**
  * Escape the quote characters the model left raw inside strings.
  *
  * Walks the text tracking string state. On a `"` while inside a string, decide whether
@@ -76,9 +108,19 @@ function _escapeStrayQuotes(src) {
         // makes, and one that still means this quote closed the string. Reading it as an
         // embedded quote instead leaves the string open and corrupts the whole rest of
         // the document, so the two faults have to be recognised together.
-        terminates = src[k] === '}' || src[k] === ']' ||
+        if (src[k] === '}' || src[k] === ']') {
+          terminates = true;
+        } else if (src[k] === '"') {
+          // Quote-comma-quote is ambiguous: either the value ended and the next KEY
+          // follows, or the model quoted two terms in a list ("struct", "class").
+          // Only a following colon proves it is a key. Treating every `", "` as a
+          // terminator is what broke evidence quoting a comma-separated list of
+          // technical terms — common in C++ / tooling transcripts.
+          terminates = _keyStartsAt(src, k);
+        } else {
           // `true` / `false` / `null` can follow a comma too, though not in these schemas.
-          _startsValue(src[k]) || /^(true|false|null)/.test(src.slice(k, k + 5));
+          terminates = _startsValue(src[k]) || /^(true|false|null)/.test(src.slice(k, k + 5));
+        }
       } else {
         terminates = false;                  // e.g. `"N+1 problem"` mid-sentence
       }

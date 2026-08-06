@@ -112,6 +112,38 @@ console.log('\n═══ raw quotes inside evidence strings (the real bug) ═�
     { quote: 'he asked "why?" and "how?" repeatedly', n: 2 });
 }
 {
+  // The C++ / Toyota failure: the panel quoted a COMMA-SEPARATED LIST of terms, so the
+  // text contains `", "` where the quote is embedded rather than closing the value.
+  // That is byte-identical to a real key boundary up to the following colon, and the
+  // comma rule used to accept it as a terminator via _startsValue — closing the string
+  // early and reinterpreting the remaining prose as keys. It failed a whole live
+  // evaluation with `Expected ',' or '}' after property value in JSON at position 5839`.
+  const broken = '{"quote": "What is the difference between "struct", "class" and "union" in C++?", ' +
+    '"topic": "C++ types"}';
+  const r = parseLLMJSON(broken);
+  eq('a quoted comma-separated LIST of terms stays inside the value', r.value, {
+    quote: 'What is the difference between "struct", "class" and "union" in C++?',
+    topic: 'C++ types',
+  });
+}
+{
+  // Same shape, two quoted tool names — the JD in the failing run named GitLab and Bazel.
+  const broken = '{"quote": "Do you use "GitLab", "Bazel" or both?", "topic": "tooling"}';
+  const r = parseLLMJSON(broken);
+  eq('two quoted proper nouns separated by a comma', r.value,
+    { quote: 'Do you use "GitLab", "Bazel" or both?', topic: 'tooling' });
+}
+{
+  // The negative half of the same rule, and the reason the fix cannot simply treat every
+  // `", "` as embedded: here the quote really does close the value and `"b"` really is
+  // the next key. Distinguishing the two is the whole point — a fix that passes the two
+  // cases above while breaking this one has just moved the bug.
+  const broken = '{"a": "said "yes", "b": "next", "c": 3}';
+  const r = parseLLMJSON(broken);
+  eq('a genuine key boundary after `", "` still terminates the value', r.value,
+    { a: 'said "yes', b: 'next', c: 3 });
+}
+{
   // Nested structure, quotes deep inside an array of evidence objects.
   const broken = '{"evidence_detail": {"Framework Knowledge": ' +
     '[{"quote": "explain "useMemo" vs "useCallback"", "topic": "hooks", "follows_up": false}]}}';
