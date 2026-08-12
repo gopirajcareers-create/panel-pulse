@@ -28,8 +28,16 @@ interface StageRecord {
 
 const STORAGE_KEY = 'smart_extract_i_v1';
 
+/**
+ * Case- and whitespace-insensitive, matching the backend's identity collation
+ * (services/pipelineIdentity.js). These two MUST agree: when the cache folded case
+ * and the backend did not, this form found a cached Stage 1 under a re-typed name and
+ * rendered "✓ Auto-filled from Stage 1", while the backend saw a name it had never
+ * stored and upserted a second record — splitting the pipeline in half.
+ */
 function buildKey(jdId: string, candidateName: string): string {
-  return `${jdId.trim().toLowerCase()}__${candidateName.trim().toLowerCase()}`;
+  const fold = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+  return `${fold(jdId)}__${fold(candidateName)}`;
 }
 
 function loadRecord(jdId: string, candidateName: string): StageRecord | null {
@@ -144,6 +152,18 @@ export function SmartExtractIForm({
   const [verifyRecord, setVerifyRecord] = useState<StageRecord | null>(null);
   const [showVerifyPopup, setShowVerifyPopup] = useState(false);
 
+  /**
+   * Whether the SERVER confirms a completed Stage 1 for this exact identity — and, if
+   * so, the spelling of the name it is stored under.
+   *
+   * Stages 2-4 used to gate on `autoJdText`, which is also populated from the
+   * localStorage cache. A cache hit therefore satisfied the guard even when the backend
+   * had no such record, and the upload proceeded to create an orphan one. Only a server
+   * response may unlock a downstream stage; the cache is for instant display only.
+   */
+  const [screening, setScreening] = useState<{ jobId: string; candidateName: string } | null>(null);
+  const [identityChecking, setIdentityChecking] = useState(false);
+
   // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -188,10 +208,17 @@ export function SmartExtractIForm({
       setShowVerifyPopup(false);
       setCompletedStages(new Set());
       setStage3CandidateStatus(null);
+      setScreening(null);
       return;
     }
 
-    // First try loading from localStorage for instantaneous UI
+    // Identity changed — the previous answer no longer applies. Clearing before the
+    // request means a stale "screening exists" can never authorise an upload under a
+    // name that has not been checked yet.
+    setScreening(null);
+
+    // First try loading from localStorage for instantaneous UI. Display only: it fills
+    // the JD preview but never unlocks a stage — see `screening`.
     const rec = loadRecord(jdId, candidateName);
     if (rec) {
       setAutoJdText(rec.jdText);
@@ -201,14 +228,23 @@ export function SmartExtractIForm({
       }
     }
 
+    // `cancelled` guards against a slow response for an old name landing after a newer
+    // one resolved — that race could re-authorise a stage for the wrong candidate.
+    let cancelled = false;
+    setIdentityChecking(true);
+
     // Fetch candidate details to check completed stages and update JD from DB
     pipelineApi.getCandidate(jdId, candidateName)
       .then(detail => {
+        if (cancelled) return;
         if (detail) {
           const completed = new Set<Stage>(detail.completedStages as Stage[]);
           setCompletedStages(completed);
-          if (detail.stage1) {
+          if (detail.stage1?.completed && detail.stage1.jdText?.trim()) {
             setAutoJdText(detail.stage1.jdText);
+            // Record the name as the SERVER spells it. Submitting under this value keeps
+            // one candidate on one document even when the typed casing differs.
+            setScreening({ jobId: detail.jobId, candidateName: detail.candidateName });
             const updatedRec = {
               jdId: detail.jobId,
               candidateName: detail.candidateName,
@@ -221,6 +257,8 @@ export function SmartExtractIForm({
             if (activeStage !== 'stage1') {
               setShowVerifyPopup(true);
             }
+          } else {
+            setScreening(null);
           }
           if (detail.stage3?.candidateStatus) {
             setStage3CandidateStatus(detail.stage3.candidateStatus);
@@ -230,17 +268,39 @@ export function SmartExtractIForm({
         }
       })
       .catch(() => {
-        // Candidate not in DB yet, reset completed stages except what might be in local
-        if (rec) {
-          setCompletedStages(new Set(['stage1']));
-        } else {
-          setCompletedStages(new Set());
-        }
-      });
+        if (cancelled) return;
+        // Not in the DB (404) — so there is no screening, whatever the cache holds. The
+        // old code inferred `completedStages: ['stage1']` from a cache hit here, which
+        // painted Stage 1 green for a candidate the backend had never heard of.
+        setScreening(null);
+        setCompletedStages(new Set());
+      })
+      .finally(() => { if (!cancelled) setIdentityChecking(false); });
+
+    return () => { cancelled = true; };
   }, [jdId, candidateName, activeStage]);
 
   const handleStageChange = (stage: Stage) => {
     setActiveStage(stage); setError(null); setSuccess(false); setShowVerifyPopup(false);
+  };
+
+  /**
+   * Gate a downstream stage on a server-confirmed Stage 1, and return the identity to
+   * submit under — the name as STORED, not as typed.
+   *
+   * Both are needed. Gating alone would still let a differently-cased name through to a
+   * backend that (before this fix) upserted a second record for it; submitting under the
+   * stored spelling is what guarantees the score lands on the same document as the
+   * screening it was scored against.
+   */
+  const requireScreening = (what: string): { jobId: string; candidateName: string } | null => {
+    if (screening) return screening;
+    setError(identityChecking
+      ? `Still verifying this candidate's Stage 1 screening — wait a moment before uploading the ${what}.`
+      : `No completed Stage 1 screening was found for "${candidateName.trim()}" under JD "${jdId.trim()}", ` +
+        `so there is no JD to score the ${what} against. Complete Stage 1 first, and check the ` +
+        `JD ID and Candidate Name match the screened record exactly.`);
+    return null;
   };
 
   // ── Extract file text ─────────────────────────────────────────────────────
@@ -356,7 +416,8 @@ export function SmartExtractIForm({
   const handleStage2Submit = async () => {
     if (!jdId.trim() || !candidateName.trim()) { setError('JD ID and Candidate Name are required.'); return; }
     if (!l1File) { setError('Please upload the L1 Transcript.'); return; }
-    if (!autoJdText) { setError('JD not found — please complete Stage 1 first before uploading L1 transcript.'); return; }
+    const identity = requireScreening('L1 transcript');
+    if (!identity) return;
     setLoading(true); setError(null);
     try {
       // Extract transcript text (if not already done)
@@ -370,10 +431,11 @@ export function SmartExtractIForm({
         setLoading(false);
         return;
       }
-      // Score via pipelineApi (calls new l1ScoringService on backend)
+      // Score via pipelineApi (calls new l1ScoringService on backend). Submitted under
+      // the screened record's own identity so the score cannot land on a new document.
       await pipelineApi.submitStage2({
-        jobId: jdId.trim(),
-        candidateName: candidateName.trim(),
+        jobId: identity.jobId,
+        candidateName: identity.candidateName,
         panelName,
         panelEmail,
         panelId,
@@ -385,7 +447,7 @@ export function SmartExtractIForm({
       toast.success('✅ L1 Scoring complete — results saved.');
       // Auto-navigate to Stage 2 results
       setTimeout(() => {
-        navigate(`/dashboard-i/candidate?jobId=${encodeURIComponent(jdId.trim())}&candidateName=${encodeURIComponent(candidateName.trim())}&stage=stage2`);
+        navigate(`/dashboard-i/candidate?jobId=${encodeURIComponent(identity.jobId)}&candidateName=${encodeURIComponent(identity.candidateName)}&stage=stage2`);
       }, 1500);
     } catch (err: any) {
       setError(err.message || 'L1 evaluation failed');
@@ -398,8 +460,12 @@ export function SmartExtractIForm({
   const handleStage3Submit = async () => {
     if (!jdId.trim() || !candidateName.trim()) { setError('JD ID and Candidate Name are required.'); return; }
     if (!l2File) { setError('Please upload the L2 Transcript.'); return; }
-    if (!autoJdText) { setError('JD not found for this candidate. Please complete Stage 1 first.'); return; }
     if (!candidateStatus) { setError('Candidate Status (Selected or Rejected) is mandatory.'); return; }
+    // This replaces the `autoJdText` check that produced the reported "JD Not Found":
+    // that flag could be set from the localStorage cache alone, so the upload was allowed
+    // to proceed against a record the backend did not have.
+    const identity = requireScreening('L2 transcript');
+    if (!identity) return;
     setLoading(true); setError(null);
     try {
       let l2Text = l2ExtractedText;
@@ -419,8 +485,8 @@ export function SmartExtractIForm({
         return;
       }
       await pipelineApi.submitStage3({
-        jobId: jdId.trim(),
-        candidateName: candidateName.trim(),
+        jobId: identity.jobId,
+        candidateName: identity.candidateName,
         panelName,
         panelEmail,
         panelId,
@@ -433,7 +499,7 @@ export function SmartExtractIForm({
       toast.success('✅ L2 Scoring complete — results saved.');
       // Auto-navigate to Stage 3 results
       setTimeout(() => {
-        navigate(`/dashboard-i/candidate?jobId=${encodeURIComponent(jdId.trim())}&candidateName=${encodeURIComponent(candidateName.trim())}&stage=stage3`);
+        navigate(`/dashboard-i/candidate?jobId=${encodeURIComponent(identity.jobId)}&candidateName=${encodeURIComponent(identity.candidateName)}&stage=stage3`);
       }, 1500);
     } catch (err: any) {
       setError(err.message || 'L2 evaluation failed');
@@ -446,6 +512,8 @@ export function SmartExtractIForm({
   const handleStage4Submit = async () => {
     if (!jdId.trim() || !candidateName.trim()) { setError('JD ID and Candidate Name are required.'); return; }
     if (!feedbackFile) { setError('Please upload the Client Feedback file.'); return; }
+    const identity = requireScreening('client feedback');
+    if (!identity) return;
     setLoading(true); setError(null);
     try {
       // Extract client feedback text (reuse JD extractor for text)
@@ -457,8 +525,8 @@ export function SmartExtractIForm({
       const feedbackText = String(res.data.data?.JD ?? '');
 
       await pipelineApi.submitStage4({
-        jobId: jdId.trim(),
-        candidateName: candidateName.trim(),
+        jobId: identity.jobId,
+        candidateName: identity.candidateName,
         feedbackText,
         feedbackFileName: feedbackFile.name
       });
@@ -559,13 +627,22 @@ export function SmartExtractIForm({
           <VerifyCard record={verifyRecord} onClose={() => setShowVerifyPopup(false)} />
         )}
 
-        {/* Auto-filled JD */}
+        {/* Auto-filled JD. The green "verified" styling is reserved for a JD the SERVER
+            confirmed; a cache-only hit is shown as unverified rather than presented as a
+            satisfied prerequisite it is not. */}
         {activeStage !== 'stage1' && autoJdText && (
           <div className="space-y-1.5">
             <label className="block text-xs font-semibold uppercase tracking-widest text-text-muted">
-              JD Content <span className="ml-1 text-[10px] normal-case tracking-normal text-emerald-400/80 font-normal">✓ Auto-filled from Stage 1</span>
+              JD Content
+              {screening
+                ? <span className="ml-1 text-[10px] normal-case tracking-normal text-emerald-400/80 font-normal">✓ Auto-filled from Stage 1</span>
+                : <span className="ml-1 text-[10px] normal-case tracking-normal text-amber-400/80 font-normal">
+                    {identityChecking ? 'verifying screening…' : 'cached locally — not confirmed by the server'}
+                  </span>}
             </label>
-            <div className="bg-white/[0.02] border border-emerald-500/20 rounded-lg px-4 py-3 text-xs text-text-muted max-h-24 overflow-y-auto leading-relaxed">
+            <div className={`bg-white/[0.02] border rounded-lg px-4 py-3 text-xs text-text-muted max-h-24 overflow-y-auto leading-relaxed ${
+              screening ? 'border-emerald-500/20' : 'border-amber-500/20'
+            }`}>
               {autoJdText.slice(0, 500)}{autoJdText.length > 500 ? '…' : ''}
             </div>
           </div>

@@ -72,6 +72,59 @@ than a failed parse, because it scores.
 
 ---
 
+### test_pipeline_identity.js
+
+**Purpose:** Pin how a pipeline record is identified. No database or model — an
+in-process collection stub models the one Mongo behaviour this turns on.
+
+```bash
+cd backend
+node scripts/test_pipeline_identity.js
+```
+
+`pipeline_evaluations` is keyed by `(jobId, candidateName)` with **no unique index**, and
+Mongo matches strings byte-for-byte unless given a collation. Stage 2/3 used to
+`findOne` on an exact match and then write with `upsert: true`, so a name re-typed as
+`dhanapalan c` missed the screened document and **inserted a second one** holding only
+that stage. That is the escalated bug: one dashboard row with the screening and no L1,
+another with L1 and no screening, and *"JD Not Found"* at Stage 3 because the record
+being scored really had no JD.
+
+The test asserts the old behaviour still splits (so the regression is legible) and that
+`services/pipelineIdentity` now resolves every case/whitespace variant to the one
+screened record, keeps accented names distinct, and never re-creates a vanished record.
+
+**Run it after touching `services/pipelineIdentity.js` or any stage write in
+`routes/pipeline.js`.** Splitting a candidate's pipeline is invisible until Stage 3.
+
+---
+
+### merge_split_pipelines.js
+
+**Purpose:** Repair records already split into two documents by the old upsert.
+**Dry run by default** — pass `--write` to apply.
+
+```bash
+node scripts/merge_split_pipelines.js            # preview every merge
+node scripts/merge_split_pipelines.js --write
+```
+
+The code fix stops new splits; it does not heal stored ones. This groups documents by
+folded identity, keeps the one holding the screening (the JD and resume every later
+stage is scored against), adopts each stage from whichever document completed it,
+recomputes `completedStages` from the merged stages, and deletes the loser only after
+the survivor's update succeeds. A duplicate completed stage is preserved under
+`mergeAudit.discarded` rather than dropped, following `appendScreeningHistory`.
+
+**What it refuses:** a group where *no* document has a usable Stage 1 is reported, not
+merged — its L1/L2 scores were produced against Stage 3's old placeholder JD, so it
+needs Stage 1 run and the stages re-scored. That is a judgement call.
+
+Idempotent, so re-running is safe. Note which database `.env` points at — the script
+prints it, because it is the one script here that **deletes** documents.
+
+---
+
 ### rescore.js
 
 **Purpose:** Re-score one stored evaluation and diff it against the score on record.

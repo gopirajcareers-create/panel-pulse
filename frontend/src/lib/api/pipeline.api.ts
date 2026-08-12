@@ -17,6 +17,29 @@ function rethrowScoringError(err: any, stage: string): never {
     throw e;
   }
 
+  // 409: the stage refused to write rather than corrupt the record, and the body explains
+  // which case it was. SCREENING_REQUIRED — asked to score a transcript for a candidate
+  // with no completed Stage 1; the backend refuses instead of upserting a second record to
+  // hold the score, which is what split pipelines in half and produced "JD Not Found" at
+  // Stage 3, and the message names the candidates under this JD that ARE screened.
+  // RECORD_VANISHED — the record was restarted while a multi-minute run was in flight.
+  // Neither is retryable, and both are useless to the user as a bare status code.
+  if (status === 409 && data?.error) {
+    const e = new Error(data.error);
+    (e as any).code = data.code || 'SCREENING_REQUIRED';
+    (e as any).retryable = false;
+    throw e;
+  }
+
+  // 404: the candidate record does not exist (e.g. Stage 4 before earlier stages). The
+  // body says which, so pass it through rather than "Request failed with status code 404".
+  if (status === 404 && data?.error) {
+    const e = new Error(data.error);
+    (e as any).code = data.code || 'NOT_FOUND';
+    (e as any).retryable = false;
+    throw e;
+  }
+
   // 422 SCREENING_FAILED: the screening genuinely could not run and nothing was
   // stored. Stage 1 used to swallow these and persist a record reading "please
   // re-upload" with a score of 0, so a model outage looked like a bad resume and no
@@ -439,7 +462,13 @@ export const pipelineApi = {
     feedbackText: string;
     feedbackFileName?: string;
   }): Promise<any> {
-    const response = await apiClient.post('/api/v1/pipeline/stage4', data);
+    // Routed through the shared handler like every other stage. Stage 4 runs a
+    // multi-minute audit and now returns 409 RECORD_VANISHED if the record was restarted
+    // before the result could be stored; without this that reached the user as
+    // "Request failed with status code 409".
+    const response = await apiClient
+      .post('/api/v1/pipeline/stage4', data, { timeout: 300000 })
+      .catch(err => rethrowScoringError(err, 'Stage 4'));
     return response.data;
   },
 

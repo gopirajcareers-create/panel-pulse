@@ -6,6 +6,10 @@ const { runL1Evaluation } = require('../services/l1ScoringService');   // NEW St
 const { runL2Evaluation } = require('../services/l2ScoringService');   // NEW Stage-3 service
 const { runScreening, appendScreeningHistory } = require('../services/screeningService');
 const { callLLM, checkOllamaHealth } = require('../services/llmClient');
+const {
+  IDENTITY_COLLATION, normalizeIdentity, identityFilter,
+  findPipelineRecord, findRecordsForJob, hasUsableScreening,
+} = require('../services/pipelineIdentity');
 const { randomUUID } = require('crypto');
 
 // In-memory job store for async pipeline evaluation jobs (cleaned up after 30 min)
@@ -42,6 +46,63 @@ async function ensureScoringEngineAvailable(res, stage) {
     details: { provider: 'ollama', base: health.base, model: health.model, reachable: health.reachable },
   });
   return false;
+}
+
+/**
+ * Load the screening a transcript stage must build on, or refuse with a message that
+ * names the record the caller probably meant.
+ *
+ * ── Why stages 2 and 3 must refuse rather than upsert ─────────────────────────
+ * Both used to run `updateOne(filter, ..., { upsert: true })` without first checking
+ * that the record existed. When the typed name differed from the stored one by case
+ * or spacing, the exact-match filter found nothing and Mongo INSERTED a second
+ * document holding only that stage — splitting one candidate's pipeline across two
+ * records, one with the screening and one with the score. Stage 3 then read
+ * `stage1.jdText` off the half without a screening and reported "JD Not Found", and
+ * the JD and resume looked "missing" because the row being viewed never had them.
+ *
+ * Matching is now case-insensitive (services/pipelineIdentity), which removes the
+ * cause. This guard removes the failure MODE: with no prior screening there is no JD
+ * to score a transcript against, so a new record must not be conjured to hold the
+ * result. Writes below use upsert:false for the same reason — after this check the
+ * record exists, and if it somehow does not, doing nothing beats orphaning a score.
+ *
+ * @returns {Promise<object|null>} the record, or null once a response has been sent
+ */
+async function requireScreenedRecord(res, col, identity, stage) {
+  const { jobId, candidateName } = normalizeIdentity(identity);
+  const record = await findPipelineRecord(col, identity);
+
+  if (record && hasUsableScreening(record)) return record;
+
+  // Name the sibling records under this JD. When a pipeline has already been split by
+  // the old upsert behaviour, or the name was simply typed differently, the record the
+  // user wants is in this list — and saying so is what makes the error actionable
+  // instead of "JD Not Found" against a record that never had one.
+  const siblings = (await findRecordsForJob(col, { jobId }))
+    .filter(d => d.candidateName !== candidateName);
+  const screened = siblings.filter(d => (d.completedStages || []).includes('stage1'));
+
+  const hint = screened.length
+    ? ` The following candidate(s) under JD "${jobId}" do have a completed screening: ` +
+      `${screened.map(d => `"${d.candidateName}"`).join(', ')}. ` +
+      `If one of those is this candidate, re-enter the name exactly as shown.`
+    : ` No candidate under JD "${jobId}" has a completed Stage 1 screening yet.`;
+
+  const reason = !record
+    ? `No record exists for candidate "${candidateName}" under JD "${jobId}".`
+    : `Stage 1 screening is incomplete for "${candidateName}" — the stored record has no JD text.`;
+
+  console.error(`[${stage}] Refused — ${reason}`);
+  res.status(409).json({
+    success: false,
+    error: `${reason} ${stage} scores the transcript against the JD stored in Stage 1, ` +
+      `so Stage 1 must be completed first.${hint}`,
+    code: 'SCREENING_REQUIRED',
+    retryable: false,
+    details: { jobId, candidateName, screenedCandidatesForJob: screened.map(d => d.candidateName) },
+  });
+  return null;
 }
 
 /**
@@ -120,10 +181,14 @@ function parseJSONSafely(text) {
 router.post('/stage1', async (req, res) => {
   try {
     const {
-      jobId, candidateName,
       panelName = '', panelEmail = '', panelId = '',
       jdText = '', resumeText = ''
     } = req.body;
+
+    // Normalize once, here, and use the result for both the screening and the write.
+    // Storing the raw value let trailing whitespace and double spaces into the primary
+    // key, where they were invisible on screen but decisive to an exact-match filter.
+    const { jobId, candidateName } = normalizeIdentity(req.body);
 
     if (!jobId || !candidateName) {
       return res.status(400).json({
@@ -159,19 +224,28 @@ router.post('/stage1', async (req, res) => {
     // ─── Store / Upsert in MongoDB ────────────────────────────────────────
     const db = await getDb();
     const pipelineCol = db.collection('pipeline_evaluations');
-    const filter = { jobId, candidateName };
+    const filter = identityFilter({ jobId, candidateName });
 
     // Keep the previous screening rather than discarding it. $set overwrote the prior
     // analysis, so a re-run destroyed the score it should be compared against — the
     // one artefact that makes a drift complaint checkable after the fact. Shared with
     // scripts/rescore.js --write so both writers preserve it identically.
-    const existing = await pipelineCol.findOne(filter);
+    const existing = await findPipelineRecord(pipelineCol, filter);
     const history = appendScreeningHistory(existing?.stage1);
+
+    // Re-screening an existing candidate must not rename them. The collation makes
+    // "dhanapalan c" match the stored "Dhanapalan C", so without this the $set would
+    // quietly rewrite the canonical spelling to whatever casing was typed last and the
+    // dashboard row would appear to change identity.
+    const canonical = {
+      jobId: existing?.jobId || jobId,
+      candidateName: existing?.candidateName || candidateName,
+    };
 
     await pipelineCol.updateOne(filter, {
       $set: {
-        jobId,
-        candidateName,
+        jobId: canonical.jobId,
+        candidateName: canonical.candidateName,
         panelName: panelName || '',
         panelEmail: panelEmail || '',
         panelId: panelId || '',
@@ -185,19 +259,20 @@ router.post('/stage1', async (req, res) => {
         },
         updatedAt: new Date()
       },
-      $setOnInsert: {
-        createdAt: new Date(),
-        completedStages: ['stage1']
-      }
-    }, { upsert: true });
+      // $addToSet, not $setOnInsert: on a re-screen the document already exists, so
+      // $setOnInsert never fires and a record whose completedStages had been cleared
+      // (restart-stage) stayed marked incomplete despite holding a fresh screening.
+      $addToSet: { completedStages: 'stage1' },
+      $setOnInsert: { createdAt: new Date() }
+    }, {
+      // Stage 1 is the only stage that may CREATE a record. The collation is what makes
+      // that safe: without it, re-screening under different casing inserted a duplicate
+      // instead of updating the existing candidate.
+      upsert: true,
+      collation: IDENTITY_COLLATION,
+    });
 
-    // Ensure completedStages includes 'stage1'
-    const doc = await pipelineCol.findOne(filter);
-    if (doc && !(doc.completedStages || []).includes('stage1')) {
-      await pipelineCol.updateOne(filter, { $addToSet: { completedStages: 'stage1' } });
-    }
-
-    console.log(`[Stage1] Saved to MongoDB — jobId=${jobId} candidate="${candidateName}"`);
+    console.log(`[Stage1] Saved to MongoDB — jobId=${canonical.jobId} candidate="${canonical.candidateName}"`);
 
     return res.status(200).json({
       success: true,
@@ -216,10 +291,11 @@ router.post('/stage1', async (req, res) => {
 router.post('/stage2', async (req, res) => {
   try {
     const {
-      jobId, candidateName,
       panelName = '', panelEmail = '', panelId = '',
       l1Transcript
     } = req.body;
+
+    const { jobId, candidateName } = normalizeIdentity(req.body);
 
     if (!jobId || !candidateName || !l1Transcript) {
       return res.status(400).json({
@@ -235,11 +311,20 @@ router.post('/stage2', async (req, res) => {
 
     const db = await getDb();
     const pipelineCol = db.collection('pipeline_evaluations');
-    const existing = await pipelineCol.findOne({ jobId, candidateName });
+
+    // Refuse before starting a job rather than upserting an orphan record. Scoring an
+    // L1 transcript needs the JD from Stage 1, so with no screening there is nothing to
+    // score against — see requireScreenedRecord.
+    const existing = await requireScreenedRecord(res, pipelineCol, { jobId, candidateName }, 'Stage2');
+    if (!existing) return;
+
+    // Write back under the identity ALREADY on the record, so a differently-cased
+    // submission updates that candidate instead of creating a second one.
+    const identity = { jobId: existing.jobId, candidateName: existing.candidateName };
 
     // Pull JD + resume from Stage 1 record
-    const jdText     = existing?.stage1?.jdText     || '';
-    const resumeText = existing?.stage1?.resumeText  || '';
+    const jdText     = existing.stage1.jdText;
+    const resumeText = existing.stage1.resumeText || '';
 
     // Start async job immediately — return jobId to frontend
     const asyncJobId = randomUUID();
@@ -248,7 +333,7 @@ router.post('/stage2', async (req, res) => {
     // Fire and forget — run full L1 evaluation in background
     runL1Evaluation({
       jobId,
-      candidateName,
+      candidateName: existing.candidateName,
       panelName:  panelName  || existing?.panelName  || '',
       panelEmail: panelEmail || existing?.panelEmail || '',
       panelId:    panelId    || existing?.panelId    || '',
@@ -263,8 +348,8 @@ router.post('/stage2', async (req, res) => {
         }
 
         // Persist to pipeline_evaluations.stage2
-        await pipelineCol.updateOne(
-          { jobId, candidateName },
+        const write = await pipelineCol.updateOne(
+          identity,
           {
             $set: {
               panelName:  panelName  || existing?.panelName  || '',
@@ -281,8 +366,22 @@ router.post('/stage2', async (req, res) => {
             },
             $addToSet: { completedStages: 'stage2' }
           },
-          { upsert: true }
+          // upsert:false — the record was verified to exist before the job started. If it
+          // has since been deleted (restart), inserting a screening-less record holding
+          // only a score is exactly the split this fix removes; report it instead.
+          { upsert: false, collation: IDENTITY_COLLATION }
         );
+
+        if (write.matchedCount === 0) {
+          const error = `L1 scoring finished but the record for "${identity.candidateName}" ` +
+            `under JD "${identity.jobId}" no longer exists, so the score could not be saved. ` +
+            `It was most likely restarted or deleted while scoring was running — re-run Stage 1, then Stage 2.`;
+          console.error(`[Stage2] ${error}`);
+          jobStore.set(asyncJobId, {
+            status: 'failed', error, code: 'RECORD_VANISHED', retryable: true, createdAt: Date.now(),
+          });
+          return;
+        }
 
         jobStore.set(asyncJobId, {
           status: 'complete',
@@ -320,7 +419,9 @@ router.post('/stage2', async (req, res) => {
  */
 router.post('/stage3', async (req, res) => {
   try {
-    const { jobId, candidateName, panelName, panelEmail, panelId, l2Transcript, candidateStatus = 'Selected' } = req.body;
+    const { panelName, panelEmail, panelId, l2Transcript, candidateStatus = 'Selected' } = req.body;
+
+    const { jobId, candidateName } = normalizeIdentity(req.body);
 
     if (!jobId || !candidateName || !l2Transcript) {
       return res.status(400).json({
@@ -334,10 +435,20 @@ router.post('/stage3', async (req, res) => {
 
     const db = await getDb();
     const pipelineCol = db.collection('pipeline_evaluations');
-    const existing = await pipelineCol.findOne({ jobId, candidateName });
 
-    const jdText = existing?.stage1?.jdText || 'General Software Engineering Job Description';
-    const resumeText = existing?.stage1?.resumeText || '';
+    // This is where the escalation surfaced. The old code read `stage1.jdText` off
+    // whatever `findOne` returned and, when that was a record created by Stage 2's
+    // upsert (or nothing at all), substituted the literal
+    // 'General Software Engineering Job Description' — scoring a real candidate against
+    // a placeholder JD and returning a confident number for it. Refuse instead, and say
+    // which record actually holds the screening.
+    const existing = await requireScreenedRecord(res, pipelineCol, { jobId, candidateName }, 'Stage3');
+    if (!existing) return;
+
+    const identity = { jobId: existing.jobId, candidateName: existing.candidateName };
+
+    const jdText = existing.stage1.jdText;
+    const resumeText = existing.stage1.resumeText || '';
     const l1Transcript = existing?.stage2?.l1Transcript || '';
 
     // The L1 transcript materially changes how "Resume Screening & Handoff" is
@@ -355,7 +466,7 @@ router.post('/stage3', async (req, res) => {
 
     runL2Evaluation({
       jobId,
-      candidateName,
+      candidateName: existing.candidateName,
       panelName: panelName || existing?.panelName || 'L2 Panel',
       panelEmail: panelEmail || existing?.panelEmail || '',
       panelId: panelId || existing?.panelId || '',
@@ -372,8 +483,8 @@ router.post('/stage3', async (req, res) => {
         }
 
         // Save result in MongoDB stage3
-        await pipelineCol.updateOne(
-          { jobId, candidateName },
+        const write = await pipelineCol.updateOne(
+          identity,
           {
             $set: {
               panelName: panelName || existing?.panelName || 'L2 Panel',
@@ -392,8 +503,21 @@ router.post('/stage3', async (req, res) => {
             },
             $addToSet: { completedStages: 'stage3' }
           },
-          { upsert: true }
+          // upsert:false — same reasoning as Stage 2: never conjure a record to hold a
+          // score whose screening is gone.
+          { upsert: false, collation: IDENTITY_COLLATION }
         );
+
+        if (write.matchedCount === 0) {
+          const error = `L2 scoring finished but the record for "${identity.candidateName}" ` +
+            `under JD "${identity.jobId}" no longer exists, so the score could not be saved. ` +
+            `It was most likely restarted or deleted while scoring was running — re-run the earlier stages, then Stage 3.`;
+          console.error(`[Stage3] ${error}`);
+          jobStore.set(asyncJobId, {
+            status: 'failed', error, code: 'RECORD_VANISHED', retryable: true, createdAt: Date.now(),
+          });
+          return;
+        }
 
         jobStore.set(asyncJobId, {
           status: 'complete',
@@ -434,7 +558,9 @@ router.post('/stage3', async (req, res) => {
  */
 router.post('/stage4', async (req, res) => {
   try {
-    const { jobId, candidateName, feedbackText, feedbackFileName = '' } = req.body;
+    const { feedbackText, feedbackFileName = '' } = req.body;
+
+    const { jobId, candidateName } = normalizeIdentity(req.body);
 
     if (!jobId || !candidateName || !feedbackText) {
       return res.status(400).json({
@@ -445,7 +571,7 @@ router.post('/stage4', async (req, res) => {
 
     const db = await getDb();
     const pipelineCol = db.collection('pipeline_evaluations');
-    const existing = await pipelineCol.findOne({ jobId, candidateName });
+    const existing = await findPipelineRecord(pipelineCol, { jobId, candidateName });
 
     if (!existing) {
       return res.status(404).json({
@@ -749,8 +875,10 @@ Return ONLY this exact JSON structure (no markdown, no text outside JSON):
       console.error('[Stage4] LLM audit failed:', err.message);
     }
 
-    await pipelineCol.updateOne(
-      { jobId, candidateName },
+    // Written under the STORED spelling, with no upsert: whatever the user typed, this
+    // updates the record the audit was actually built from and cannot conjure a second.
+    const write = await pipelineCol.updateOne(
+      { jobId: existing.jobId, candidateName: existing.candidateName },
       {
         $set: {
           stage4: {
@@ -764,8 +892,23 @@ Return ONLY this exact JSON structure (no markdown, no text outside JSON):
           updatedAt: new Date()
         },
         $addToSet: { completedStages: 'stage4' }
-      }
+      },
+      { upsert: false, collation: IDENTITY_COLLATION }
     );
+
+    // The audit runs for minutes; the record can be restarted or deleted in the meantime.
+    // Reporting success on a write that stored nothing left the user looking at an audit
+    // the database does not have, with no way to tell it had been dropped.
+    if (write.matchedCount === 0) {
+      console.error(`[Stage4] Record vanished mid-audit — jobId=${existing.jobId} candidate="${existing.candidateName}"`);
+      return res.status(409).json({
+        success: false,
+        error: `The pipeline record for "${existing.candidateName}" was removed or restarted while the ` +
+          `Stage 4 audit was running, so the result could not be saved. Re-run Stage 4.`,
+        code: 'RECORD_VANISHED',
+        retryable: false,
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -793,7 +936,7 @@ router.post('/generate-l1-questions', async (req, res) => {
 
     const db = await getDb();
     const pipelineCol = db.collection('pipeline_evaluations');
-    const existing = await pipelineCol.findOne({ jobId, candidateName });
+    const existing = await findPipelineRecord(pipelineCol, req.body);
 
     if (!existing?.stage1?.completed) {
       return res.status(400).json({ success: false, error: 'Stage 1 must be completed before generating L1 questions.' });
@@ -968,6 +1111,17 @@ router.get('/candidates', async (req, res) => {
       .sort({ updatedAt: -1 })
       .toArray();
 
+    // Records already split by the old upsert behaviour are still in the collection, and
+    // the fix above stops new ones without healing existing ones. Group by the folded
+    // identity so the two halves of one candidate can be marked as such in the UI
+    // instead of reading as two separate people with contradictory progress.
+    const foldedCounts = new Map();
+    for (const doc of list) {
+      const key = `${String(doc.jobId || '').trim().toLowerCase()}__` +
+        `${String(doc.candidateName || '').trim().replace(/\s+/g, ' ').toLowerCase()}`;
+      foldedCounts.set(key, (foldedCounts.get(key) || 0) + 1);
+    }
+
     const formatted = list.map(doc => {
       // Calculate latest/average scores if available
       let latestScore = null;
@@ -976,6 +1130,9 @@ router.get('/candidates', async (req, res) => {
       } else if (doc.stage2?.completed && doc.stage2?.evaluation?.score) {
         latestScore = doc.stage2.evaluation.score;
       }
+
+      const foldedKey = `${String(doc.jobId || '').trim().toLowerCase()}__` +
+        `${String(doc.candidateName || '').trim().replace(/\s+/g, ' ').toLowerCase()}`;
 
       return {
         id: doc._id.toString(),
@@ -990,7 +1147,11 @@ router.get('/candidates', async (req, res) => {
         stage1Status: doc.stage1?.completed ? 'completed' : 'pending',
         stage2Status: doc.stage2?.completed ? 'completed' : 'pending',
         stage3Status: doc.stage3?.completed ? 'completed' : 'pending',
-        stage4Status: doc.stage4?.completed ? 'completed' : 'pending'
+        stage4Status: doc.stage4?.completed ? 'completed' : 'pending',
+        // true when another record exists for the same candidate under the same JD,
+        // differing only in case or spacing — i.e. this row is one half of a split
+        // pipeline and its missing stages are on the sibling row.
+        duplicateIdentity: (foldedCounts.get(foldedKey) || 0) > 1
       };
     });
 
@@ -1022,10 +1183,9 @@ router.get('/candidate', async (req, res) => {
     const db = await getDb();
     const pipelineCol = db.collection('pipeline_evaluations');
 
-    const candidate = await pipelineCol.findOne({
-      jobId: jobId.trim(),
-      candidateName: candidateName.trim()
-    });
+    // Case-insensitive, so the detail view resolves the same record the frontend's own
+    // case-folded cache believes it is showing.
+    const candidate = await findPipelineRecord(pipelineCol, { jobId, candidateName });
 
     if (!candidate) {
       return res.status(404).json({
@@ -1062,10 +1222,13 @@ router.post('/restart', async (req, res) => {
     const db = await getDb();
     const pipelineCol = db.collection('pipeline_evaluations');
 
-    const result = await pipelineCol.deleteOne({
-      jobId: jobId.trim(),
-      candidateName: candidateName.trim()
-    });
+    // deleteOne, not deleteMany: matching case-insensitively could now span more than
+    // one legacy document, and a restart must not silently take out a record the user
+    // cannot see. Run scripts/merge_split_pipelines.js to consolidate those first.
+    const result = await pipelineCol.deleteOne(
+      identityFilter({ jobId, candidateName }),
+      { collation: IDENTITY_COLLATION }
+    );
 
     if (result.deletedCount === 0) {
       return res.status(404).json({
@@ -1126,10 +1289,7 @@ router.post('/restart-stage', async (req, res) => {
 
     // Also update completedStages array
     const result = await pipelineCol.updateOne(
-      {
-        jobId: jobId.trim(),
-        candidateName: candidateName.trim()
-      },
+      identityFilter({ jobId, candidateName }),
       {
         $unset: unsetOperation,
         $pull: {
@@ -1138,7 +1298,8 @@ router.post('/restart-stage', async (req, res) => {
         $set: {
           updatedAt: new Date()
         }
-      }
+      },
+      { collation: IDENTITY_COLLATION }
     );
 
     if (result.matchedCount === 0) {
