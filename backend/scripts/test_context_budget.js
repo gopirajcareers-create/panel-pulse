@@ -39,12 +39,18 @@ const filler = (n, word) => (word + ' ').repeat(Math.ceil(n / (word.length + 1))
 // ─────────────────────────────────────────────────────────────────────────────
 console.log(`Context: num_ctx=${NUM_CTX} chars_per_token=${CHARS_PER_TOKEN}\n`);
 
-// A skill name at cleanSkillList's upper bound (80 chars), repeated to the per-bucket
-// cap. The screening prompt enumerates each skill TWICE — once as a numbered list and
-// once as a JSON row skeleton — so the skill lists are a real part of the overhead, not
-// a rounding error, and PROMPT_RESERVE_CHARS has to cover them.
+// A skill name at cleanSkillList's upper bound, repeated to the per-bucket cap. The
+// screening prompt enumerates each skill TWICE — once as a numbered list and once as a
+// JSON row skeleton — so the skill lists are a real part of the overhead, not a rounding
+// error, and PROMPT_RESERVE_CHARS has to cover them.
+//
+// The bound is READ from the service (MAX_SKILL_CHARS), not written here as a literal.
+// It was 80 in both places until the cap rose to 120 to admit the competency phrasing
+// non-technical JDs use; a copied literal would have left this test certifying a prompt
+// 12 x 40 x 2 = 960 chars smaller than the one actually sent, on both buckets.
 const worstCaseSkills = (n, word) => Array.from({ length: n }, (_, i) => ({
-  skill: `${filler(76, word)} ${String(i).padStart(2, '0')}`.slice(0, 80),
+  skill: `${filler(screening.MAX_SKILL_CHARS - 4, word)} ${String(i).padStart(2, '0')}`
+    .slice(0, screening.MAX_SKILL_CHARS),
   source: 'jd',
 }));
 

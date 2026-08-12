@@ -42,15 +42,24 @@ CRITICAL RULES:
 
 If the JD is insufficient, return ONLY: "JD is very short, need more info on the JD"
 
-Output Format (when JD is valid):
+FORMATTING RULES — these decide whether your answer can be read at all:
+5. Write ONE skill per line, each starting with "- ". Never put several skills on one
+   line separated by commas, and never wrap a section in square brackets.
+6. Keep each skill to a short noun phrase (1-8 words). Name the skill, do not describe
+   it: write "Stakeholder Management", not "Ability to manage multiple stakeholders and
+   competing priorities across the business".
+7. If a section has no skills, write exactly "- None" under it. Never omit the header.
+
+Output Format (when JD is valid) — reproduce these headers EXACTLY:
 Mandatory Skills:
-[List mandatory skills]
+- <skill>
+- <skill>
 
 Good To Have Skills:
-[List nice-to-have skills]
+- <skill>
 
 AI Suggested Skills:
-[List top 5 AI-recommended mandatory skills]
+- <skill>
 
 No extra text. No explanations. No assumptions.`;
 
@@ -150,33 +159,174 @@ async function _callLLMWithRetry(userPrompt) {
   throw lastError;
 }
 
+// ─── Response parsing ────────────────────────────────────────────────────────
+//
+// The model is asked for one skill per line under three fixed headers, and MOSTLY
+// obliges. It is not contractually bound to, and the parser used to treat the
+// happy shape as the only shape: headers had to end in a literal colon, and each
+// section body was split on newlines ONLY.
+//
+// That made Stage 1 fail outright on real JDs. Measured against JD.csv row 1
+// (Account Manager, 2146 chars) on qwen3:latest at seed 42 / temperature 0 — so
+// this is the DETERMINISTIC result for that JD, not an unlucky sample:
+//
+//   Mandatory Skills:
+//   [Client Relationship Management, Account Growth & Business Development, ...]
+//
+// One bracketed, comma-joined line. Newline-splitting yielded a single 600-char
+// "skill", which screeningService.cleanSkillList then discarded twice over — as a
+// bracketed template placeholder, and as over-80-chars — leaving zero skills in
+// all three buckets and throwing "No skills could be extracted from the JD".
+//
+// That is the reported bug: it hits "few records only" because whether the model
+// answers in lines or in one comma-joined list varies BY JD, and is stable per JD.
+// A JD that fails, fails every retry — the seed guarantees it.
+//
+// So the shapes below are tolerated deliberately. Each was observed or is a near
+// neighbour of one that was; none of them mean the JD lacks skills.
+
+/**
+ * Header spellings for one section, tolerant of markdown and missing colons.
+ *
+ * Note the end-of-input assertion: `(?![\s\S])`, not `$`. Under the `m` flag `$` matches
+ * the end of EVERY line, so a lazy body combined with `|$` stopped at the first newline
+ * and captured the empty string — every section parsed as empty and every JD looked
+ * skill-less. JS has no `\z`, so the negative lookahead is the way to say "really the end".
+ */
+function _sectionRegex(headerPattern, followers) {
+  // Leading  ###/**/-  · trailing **/: optional · then the body up to the next header.
+  const head = `^[ \\t]*(?:[#>*_-]+[ \\t]*)*${headerPattern}[ \\t]*:?[ \\t]*\\**[ \\t]*$`;
+  const END = '(?![\\s\\S])';
+  const stop = followers.length
+    ? `(?=${followers.map(f => `^[ \\t]*(?:[#>*_-]+[ \\t]*)*\\**[ \\t]*${f}`).join('|')}|${END})`
+    : `(?=${END})`;
+  return new RegExp(`${head}([\\s\\S]*?)${stop}`, 'im');
+}
+
+const H_MANDATORY  = 'Mandatory\\s*Skills';
+const H_GOODTOHAVE = 'Good\\s*[-]?\\s*To\\s*[-]?\\s*Have\\s*Skills';
+// The model alternates between "AI Suggested" and "AI-Suggested".
+const H_AI         = 'AI\\s*[-]?\\s*Suggested\\s*Skills';
+
+const SECTION_MANDATORY  = _sectionRegex(H_MANDATORY,  [H_GOODTOHAVE, H_AI]);
+const SECTION_GOODTOHAVE = _sectionRegex(H_GOODTOHAVE, [H_AI]);
+const SECTION_AI         = _sectionRegex(H_AI,         []);
+
+/** Values that mean "this section is empty", not "this is a skill". */
+const EMPTY_MARKERS = new Set(['', 'none', 'n/a', 'na', 'nil', 'not specified', 'not applicable', 'not mentioned', '-', '--']);
+
+/**
+ * Is this line the template placeholder echoed back rather than a real answer?
+ * Kept narrow on purpose: "[List mandatory skills]" is noise, but "[Java, SQL]" is
+ * a real answer that merely arrived wrapped in brackets, and the old blanket
+ * "starts with [ and ends with ]" rule threw both away.
+ */
+function _isPlaceholder(s) {
+  return /^\[?\s*list\b/i.test(s) || /^\[?\s*(insert|add|e\.?g\.?)\b/i.test(s);
+}
+
+/**
+ * Split one section body into individual skills.
+ *
+ * ── Why a bullet is authoritative ────────────────────────────────────────────
+ * Two shapes have to be handled, and they want OPPOSITE treatment of commas:
+ *
+ *   - Operational, Hiring and Delivery Management        ← ONE skill, comma is internal
+ *   [Client Relationship Management, Account Growth]     ← TWO skills, comma delimits
+ *
+ * So the rule is: if the model delimited the line itself — with a bullet or a number —
+ * that delimiter is respected and the line is ONE skill. Only an undelimited line is
+ * comma-split, which is the only case where a comma can be carrying that job.
+ *
+ * Splitting bulleted lines on commas too was tried first and was worse than the bug it
+ * fixed: "Proficiency in preparing proposals, RFX responses, and presentations" became
+ * three rows, one of them the bare word "presentations", and each junk row is a skill
+ * the resume can never match, pulling the match percentage down. One clumsy-but-whole
+ * skill scores more honestly than three fragments.
+ *
+ * @private
+ */
+function _splitSkills(text) {
+  if (!text) return [];
+  const out = [];
+
+  for (const rawLine of String(text).split(/\r?\n/)) {
+    let line = rawLine.trim();
+    if (!line) continue;
+
+    line = line.replace(/^\*\*(.*)\*\*$/, '$1').trim();          // **bold** line
+    if (_isPlaceholder(line)) continue;
+
+    // Did the MODEL delimit this line? Record it before stripping the marker.
+    const bulleted = /^(?:[-*•▪·]+\s*|\d+[.)]\s*)/.test(line);
+    line = line.replace(/^[-*•▪·]+\s*/, '').replace(/^\d+[.)]\s*/, '').trim();
+
+    // A bracket or brace wrapping the WHOLE line is packaging, not content.
+    line = line.replace(/^[[({]\s*/, '').replace(/\s*[\])}]$/, '').trim();
+    if (!line || _isPlaceholder(line)) continue;
+
+    // Pipes always delimit — no skill name contains one.
+    const segments = bulleted
+      ? line.split(/\s+\|\s+/)
+      : line.split(/[,;]|\s+\|\s+/);
+
+    for (const part of segments) {
+      const s = part.trim()
+        .replace(/^[-*•▪·]+\s*/, '')
+        .replace(/^\d+[.)]\s*/, '')
+        .replace(/^(?:and|or|as well as)\s+/i, '')     // artefact of comma-splitting
+        .replace(/[.,;:]+$/, '')
+        .trim();
+      if (!s || EMPTY_MARKERS.has(s.toLowerCase())) continue;
+      if (_isPlaceholder(s)) continue;
+      out.push(s);
+    }
+  }
+
+  return out;
+}
+
 /**
  * Parse the LLM response into structured format
- * 
+ *
  * @private
  * @param {string} response - Raw LLM response
  * @returns {Object} Parsed skill classifications
  */
 function _parseAnalysisResponse(response) {
   try {
-    const mandatorySkillsMatch = response.match(/Mandatory Skills:\s*([\s\S]*?)(?=Good\s*To\s*Have\s*Skills:|AI Suggested Skills:|$)/i);
-    const goodToHaveMatch = response.match(/Good\s*To\s*Have\s*Skills:\s*([\s\S]*?)(?=AI Suggested Skills:|$)/i);
-    const aiSuggestedMatch = response.match(/AI Suggested Skills:\s*([\s\S]*?)$/i);
-
-    const parseSkills = (text) => {
-      if (!text) return [];
-      return text
-        .split('\n')
-        .filter(line => line.trim())
-        .map(line => line.replace(/^\d+\.\s*/, '').trim())
-        .filter(line => line.length > 0);
+    const text = String(response || '');
+    const section = (re) => {
+      const m = text.match(re);
+      return m ? m[1] : '';
     };
 
-    return {
-      mandatory_skills: parseSkills(mandatorySkillsMatch ? mandatorySkillsMatch[1] : ''),
-      good_to_have_skills: parseSkills(goodToHaveMatch ? goodToHaveMatch[1] : ''),
-      key_skills: parseSkills(aiSuggestedMatch ? aiSuggestedMatch[1] : '')
+    const parsed = {
+      mandatory_skills: _splitSkills(section(SECTION_MANDATORY)),
+      good_to_have_skills: _splitSkills(section(SECTION_GOODTOHAVE)),
+      key_skills: _splitSkills(section(SECTION_AI)),
     };
+
+    // A response that matched no header at all is a different failure from a JD with no
+    // skills, and the caller can only report it honestly if it can tell them apart.
+    if (!SECTION_MANDATORY.test(text) && !SECTION_GOODTOHAVE.test(text) && !SECTION_AI.test(text)) {
+      // The system prompt DEFINES this sentence as the answer for a JD too thin to
+      // analyse, so it is the model complying, not misbehaving. The length pre-check in
+      // analyzeJD only catches <50 chars; a 300-char JD of pure culture blurb reaches the
+      // model and comes back here. Flagging it as a malformed response would tell the user
+      // to retry a call that will deterministically return the same thing.
+      if (/need more info on the JD/i.test(text)) {
+        parsed.insufficient_jd = true;
+        console.warn('[JDAnalyzer] Model judged the JD too thin to analyse: ' +
+          `"${text.trim().slice(0, 120)}"`);
+      } else {
+        parsed.unstructured_response = true;
+        console.warn('[JDAnalyzer] Response contained none of the three expected section headers — ' +
+          `no skills could be parsed. First 200 chars: ${text.slice(0, 200)}`);
+      }
+    }
+
+    return parsed;
   } catch (error) {
     console.error('Error parsing analysis response:', error.message);
     return {
@@ -245,5 +395,9 @@ async function analyzeJDBatch(jdContents) {
 
 module.exports = {
   analyzeJD,
-  analyzeJDBatch
+  analyzeJDBatch,
+  // Exported for scripts/test_jd_skill_parse.js. The parse step is where Stage 1's
+  // "No skills could be extracted from the JD" originated, and it could not be tested
+  // without running a live model against a specific JD to reproduce the answer shape.
+  _parseAnalysisResponse,
 };

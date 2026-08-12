@@ -183,6 +183,13 @@ export interface SkillsProvenance {
   jdStatedGoodToHaveCount: number;
   aiSuggestedCount: number;
   analyzerError: string | null;
+  /**
+   * true when the analyzer replied without its three expected section headers, so no
+   * skills could be read from an otherwise successful call. Distinguishes a MODEL failure
+   * from a JD that genuinely lists no skills — the two need opposite advice, and
+   * conflating them is what had Stage 1 telling people to check a JD that was fine.
+   */
+  unstructuredResponse?: boolean;
   /** true when the JD stated no mandatory skills and AI suggestions were used instead. */
   mandatoryInferred: boolean;
   notice: string | null;

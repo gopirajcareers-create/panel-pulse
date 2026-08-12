@@ -82,9 +82,15 @@ const MAX_OUTPUT_TOKENS = 3000;
 // that check by 639 tokens — the skill lists are enumerated TWICE (numbered list, then
 // JSON row skeleton), so 24 long skills cost ~4000 chars on their own.
 //
-// 12000 = 9044 measured + ~2400 (750 tokens) of headroom for future prompt edits.
+// 13400 = 10963 measured + ~2400 (750 tokens) of headroom for future prompt edits.
 // Underestimating is a hard pre-flight failure; overestimating only costs input tail.
-const PROMPT_RESERVE_CHARS = 12000;
+//
+// Rose from 12000 when MAX_SKILL_CHARS went 80 -> 120 to admit the competency phrasing
+// non-technical JDs use. 24 skills (two buckets of 12) enumerated TWICE at +40 chars each
+// is ~1920 chars of extra overhead, and test_context_budget.js caught it immediately:
+// headroom fell to 324 tokens against its 750 floor. That is the check working — the
+// reserve is measured, and anything that grows the prompt has to move it.
+const PROMPT_RESERVE_CHARS = 13400;
 
 // The resume is what is being examined, so it gets the larger share; the JD is context
 // for judging relevance, and its skills have already been extracted by this point.
@@ -114,6 +120,19 @@ console.log(`[Screening] Input caps resume=${MAX_RESUME_CHARS} jd=${MAX_JD_CHARS
 // Cap the skill list so a JD that yields dozens of skills cannot push the prompt past
 // the window, and so one row per skill fits in the output budget.
 const MAX_SKILLS_PER_BUCKET = 12;
+
+// Longest single skill string kept by cleanSkillList.
+//
+// EXPORTED because scripts/test_context_budget.js measures the worst-case prompt from it.
+// It was a literal 80 here and a literal 80 there; raising this one to admit competency
+// phrasing ("Strong business acumen with financial management awareness") would otherwise
+// have left the budget check measuring a prompt smaller than the one actually sent —
+// the same by-hand-derived-constant drift PROMPT_RESERVE_CHARS exists to catch.
+const MAX_SKILL_CHARS = 120;
+
+// Matching cap on word count. Both bounds must move together: a 14-word phrase averaging
+// over 8 chars a word would clear this test and then be dropped by the char cap.
+const MAX_SKILL_WORDS = 14;
 
 // ─── Skill provenance ────────────────────────────────────────────────────────
 
@@ -145,21 +164,41 @@ function cleanSkillList(skills) {
 
     // Leading bullets / numbering the parser left behind.
     s = s.replace(/^[-*•▪·]+\s*/, '').replace(/^\d+[.)]\s*/, '').trim();
-    // Bracketed template placeholders: "[List mandatory skills]".
-    if (/^[[(].*[\])]$/.test(s)) continue;
+    // Template placeholders: "[List mandatory skills]". This tests for the LIST verb, not
+    // merely for brackets — the old `^[[(].*[\])]$` rule threw away "[Client Relationship
+    // Management, Account Growth, ...]", which is the model's real answer delivered as one
+    // bracketed line, and is exactly how it answers for some JDs. jdAnalyzerService now
+    // unwraps and splits that shape, so anything still bracket-wrapped here is noise.
+    if (/^[[(]?\s*(list|insert|add|e\.?g\.?)\b/i.test(s)) continue;
+    s = s.replace(/^[[({]\s*/, '').replace(/\s*[\])}]$/, '').trim();
     // Trailing punctuation.
     s = s.replace(/[.,;:]+$/, '').trim();
 
-    if (s.length < 2 || s.length > 80) continue;
+    // 120, not 80: raised with the word cap below, or a 14-word competency phrase would
+    // pass that test and be dropped here for the same reason, defeating the change.
+    if (s.length < 2 || s.length > MAX_SKILL_CHARS) continue;
 
     const lower = s.toLowerCase();
+    // "None" / "N/A" is the model saying the section is EMPTY. Scored as a skill it
+    // becomes a row the resume can never match, dragging the percentage down.
+    if (['none', 'n/a', 'na', 'nil', 'not specified', 'not applicable', 'not mentioned'].includes(lower)) continue;
     // A section header echoed as a list item.
     if (/^(mandatory|good\s*to\s*have|ai\s*suggested|key)\s*skills?\s*:?$/.test(lower)) continue;
     // Reasoning prose rather than a skill name. A real skill is a noun phrase; these
     // openers mark the model narrating instead of answering.
     if (/^(wait|hmm|okay|so|but|however|actually|let me|i need|i think|the (jd|role|candidate|user)|this is|note that)\b/.test(lower)) continue;
-    // A sentence, not a skill: many words AND a verb-ish tail.
-    if (s.split(/\s+/).length > 8) continue;
+    // A sentence, not a skill. The cap was 8 words, which was calibrated on engineering
+    // JDs ("Spring Boot", "CI/CD Pipelines") and quietly failed non-technical ones: an
+    // Account Manager JD states its requirements as competencies — "Strong business
+    // acumen with financial management awareness" (6), "Ability to manage multiple
+    // stakeholders and priorities" (6), "Proficiency in preparing proposals and RFX
+    // responses" (7) — and the longer ones were dropped as prose. Dropping a real
+    // requirement is not neutral here: with every entry dropped, Stage 1 throws
+    // "No skills could be extracted from the JD" on a JD that plainly lists them.
+    //
+    // 14 admits those phrasings while still rejecting the model's narration, which runs
+    // to full sentences and is caught by the opener test above in any case.
+    if (s.split(/\s+/).length > MAX_SKILL_WORDS) continue;
     // Must contain a letter — "5+", "---" are not skills.
     if (!/[a-z]/i.test(s)) continue;
 
@@ -193,6 +232,13 @@ async function resolveSkills(jdText) {
   let jdGoodToHave = [];
   let aiSuggested = [];
   let analyzerError = null;
+  // The analyzer replied without any of its three section headers — it narrated, or was
+  // cut off. Tracked separately because it means the MODEL failed, not the JD, and the
+  // two need different advice: re-uploading a JD cannot fix a model that did not answer.
+  let unstructuredResponse = false;
+  // The model's documented verdict that the JD is too thin to analyse. Distinct again:
+  // the JD really is the problem here, and the fix is a fuller JD, not a retry.
+  let insufficientJd = false;
 
   if (String(jdText || '').trim()) {
     try {
@@ -203,6 +249,8 @@ async function resolveSkills(jdText) {
         jdMandatory   = cleanSkillList(analysis.parsed_analysis.mandatory_skills);
         jdGoodToHave  = cleanSkillList(analysis.parsed_analysis.good_to_have_skills);
         aiSuggested   = cleanSkillList(analysis.parsed_analysis.key_skills);
+        unstructuredResponse = Boolean(analysis.parsed_analysis.unstructured_response);
+        insufficientJd = Boolean(analysis.parsed_analysis.insufficient_jd);
       } else if (!analysis.success) {
         analyzerError = analysis.error || 'JD analysis returned no result';
       }
@@ -231,6 +279,8 @@ async function resolveSkills(jdText) {
     jdStatedGoodToHaveCount: jdGoodToHave.length,
     aiSuggestedCount: aiSuggested.length,
     analyzerError,
+    unstructuredResponse,
+    insufficientJd,
     // The single field a view needs to decide whether to show the caveat banner.
     mandatoryInferred: usedAiForMandatory,
     notice: mandatory.length === 0
@@ -379,12 +429,26 @@ async function runScreening({ jobId, candidateName = '', jdText = '', resumeText
   const { mandatory, goodToHave, keySkills, provenance } = await resolveSkills(jd);
 
   if (mandatory.length === 0 && goodToHave.length === 0) {
-    throw new Error(
-      'No skills could be extracted from the JD, and no AI suggestions were produced. ' +
-      'There is nothing to screen against. Check that the uploaded JD contains a ' +
-      'requirements or skills section.' +
-      (provenance.analyzerError ? ` (JD analyzer error: ${provenance.analyzerError})` : '')
-    );
+    // Say which of the three things actually went wrong. The single message this
+    // replaced blamed the JD in every case — including when the JD was fine and the
+    // model had answered in a shape the parser could not read, which is what the
+    // reported "occurring for a few records only" failure was. Advice to check the JD
+    // for a skills section is unfollowable when the section is right there, and it
+    // sent people re-cutting documents that were never the problem.
+    const detail = provenance.analyzerError
+      ? `The JD analyzer failed: ${provenance.analyzerError}. Nothing was stored — retry.`
+      : provenance.insufficientJd
+        ? 'The analyzer judged this JD too thin to extract skills from. Upload a fuller JD ' +
+          'that lists the role\'s requirements or skills — retrying this one will not help.'
+        : provenance.unstructuredResponse
+          ? 'The JD analyzer replied without its expected "Mandatory Skills / Good To Have ' +
+            'Skills / AI Suggested Skills" sections, so no skills could be read from its ' +
+            'answer. This is a model failure, not a problem with your JD — retry, and if it ' +
+            'persists check the backend logs for the raw analyzer response.'
+          : 'The analyzer returned all three skill sections EMPTY. Check that the uploaded ' +
+            'JD contains a requirements or skills section — if it does, the extracted text ' +
+            'may be truncated or unreadable.';
+    throw new Error(`Cannot screen: no skills are available to score against. ${detail}`);
   }
 
   // ── Step 2: Ask the model for evidence — only evidence ────────────────────
@@ -588,6 +652,8 @@ module.exports = {
   MAX_JD_CHARS,
   MAX_OUTPUT_TOKENS,
   MAX_SKILLS_PER_BUCKET,
+  MAX_SKILL_CHARS,
+  MAX_SKILL_WORDS,
   PROMPT_RESERVE_CHARS,
   SCORING_SEED,
   SOURCE_JD,
