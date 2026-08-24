@@ -1,6 +1,7 @@
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import type { PipelineDetail, SkillMatchRow, SkillTier } from '@/lib/api/pipeline.api';
+import { dedupeEvidence } from './evidence';
 
 export type ReportStageId = 'stage1' | 'stage2' | 'stage3' | 'stage4' | 'overall';
 
@@ -16,13 +17,6 @@ function esc(s: string | undefined | null): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-function formatDate(dateStr: string | undefined | null): string {
-  if (!dateStr) return 'Not recorded';
-  const date = new Date(dateStr);
-  if (Number.isNaN(date.getTime())) return 'Not recorded';
-  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function formatDateTime(dateStr: string | undefined | null): string {
@@ -74,17 +68,11 @@ function skillRowsHTML(rows: SkillMatchRow[]): string {
     const inferred = item.source === 'ai-suggested'
       ? ' <span style="font-size:9px;color:#7c3aed;font-weight:700;">(AI-INFERRED)</span>'
       : '';
-    // The demotion reason is carried into the report for the same reason it is on screen:
-    // it answers "the resume mentions this — why is it only Partial?" without which the
-    // grade reads as arbitrary.
-    const demotion = item.audit?.demoted
-      ? `<div style="font-size:10px;color:#b45309;margin-top:3px;">Downgraded from ${esc(item.audit.claimed_tier)}: ${esc(item.audit.demotion_reasons.join('; '))}</div>`
-      : '';
-    // The opposite correction: the model reported the skill absent, the resume names it.
-    // Recorded because the reader is otherwise looking at a Partial the model called None.
-    const promotion = item.audit?.promoted
-      ? `<div style="font-size:10px;color:#047857;margin-top:3px;">Corrected upward: ${esc(item.audit.demotion_reasons.join('; '))}</div>`
-      : '';
+    // The tier-correction notes ("Downgraded from STRONG: …", "Corrected upward: …") are
+    // deliberately NOT printed here. They explain the grading machinery to a reader who
+    // did not ask for it, and repeated once per row they crowded out the resume evidence
+    // the Evidence column exists to show. Both remain on screen, where the grade can be
+    // interrogated interactively.
     return `
     <tr>
       <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;white-space:nowrap;">
@@ -92,7 +80,7 @@ function skillRowsHTML(rows: SkillMatchRow[]): string {
         <span style="font-size:10px;color:${t.color};font-weight:700;margin-left:4px;">${t.label}</span>
       </td>
       <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-weight:600;">${esc(item.skill)}${inferred}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:11px;">${esc(item.evidence)}${demotion}${promotion}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:11px;">${esc(item.evidence)}</td>
     </tr>
   `;
   }).join('');
@@ -187,6 +175,11 @@ function generateStage1HTML(data: PipelineDetail): string {
           </ul>
         </div>` : '';
 
+  // Read for the per-table weights only. The derivation itself — the
+  // "mandatory 7.00/12 x 70 + …" line and the note on how a tier converts to credit —
+  // is not printed: the report goes to readers who need the verdict and the evidence
+  // behind it, and the arithmetic read as the report explaining its own machinery.
+  // It is still on screen, and `scoreBreakdown` is stored on the record either way.
   const b = analysis.scoreBreakdown;
 
   return `
@@ -213,15 +206,6 @@ function generateStage1HTML(data: PipelineDetail): string {
             </td>
           </tr>
         </table>
-        ${b?.formula ? `
-        <p style="font-size:10px;color:#6b7280;margin:12px 0 8px;font-family:monospace;">
-          ${esc(b.formula)}
-        </p>
-        <p style="font-size:10px;color:#6b7280;margin:0 0 8px;line-height:1.5;">
-          Each skill scores Strong 1.0, Partial 0.5 or Not found 0. The percentage is calculated
-          from the tiers in the tables below — it is not a separate judgement, so it can be checked
-          by hand.
-        </p>` : ''}
         <div style="margin-top:12px;padding-top:12px;border-top:1px solid #e5e7eb;">
           <p style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.08em;margin:0 0 4px;">Experience Alignment</p>
           <p style="font-size:11px;color:#111827;margin:0;line-height:1.6;">${esc(analysis.experienceMatch)}</p>
@@ -374,7 +358,10 @@ function dimensionTableHTML(
     const pct = dim.max > 0 ? Math.min(100, (score / dim.max) * 100) : 0;
     const colour = dim.max > 0 ? scoreColour(score, dim.max) : '#6b7280';
 
-    const quotes = Array.isArray(evidence[dim.name]) ? evidence[dim.name] : [];
+    // Repeats collapsed: records scored before the backend dedupe carry one question
+    // listed up to eight times, and printing all eight buried the dimension summary
+    // under a wall of the same sentence. See lib/utils/evidence.ts.
+    const quotes = dedupeEvidence(evidence[dim.name]);
     const evidenceHTML = quotes.length
       ? quotes.map(q => {
           const quote = String(q ?? '').trim();
@@ -807,23 +794,21 @@ export function buildReportFileName(
   return `${stem}-${suffix[stageId]}`;
 }
 
-/** "L1 — Lakshmi (24 Mar 2026)" for each panel that actually evaluated this candidate. */
-function panelRoster(data: PipelineDetail): string[] {
-  return PANEL_STAGES
-    .filter(cfg => (data as any)[cfg.id]?.evaluation)
-    .map(cfg => {
-      const { panelName, evaluatedAt } = panelIdentity(data, cfg);
-      const round = cfg.id === 'stage2' ? 'L1' : 'L2';
-      return `${round} — ${panelName} (${formatDate(evaluatedAt)})`;
-    });
-}
-
+/**
+ * The document header carries the candidate and the job, not the panels.
+ *
+ * It used to print a "Panel Email" chip and a "Panels Evaluated" roster. Both were
+ * whole-document claims about people who each belong to one round: the email is
+ * `data.panelEmail`, which is whichever panel submitted last, and the roster
+ * duplicated identity the L1, L2 and audit sections already state beside their own
+ * scores and dates. A reader who saw one name at the top read it as "the panel" for
+ * everything below.
+ */
 function documentShell(title: string, subtitle: string, data: PipelineDetail, body: string, now: Date): string {
   const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   const timeStr = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const host = typeof window !== 'undefined' ? window.location.host : '';
-  const panels = panelRoster(data);
 
   return `<!DOCTYPE html>
 <html>
@@ -860,15 +845,8 @@ function documentShell(title: string, subtitle: string, data: PipelineDetail, bo
   <div class="meta-grid">
     <div class="meta-item"><span style="color:#6b7280;">Job ID: </span><strong>${esc(data.jobId)}</strong></div>
     <div class="meta-item"><span style="color:#6b7280;">Candidate: </span><strong style="font-size:13px;">${esc(data.candidateName)}</strong></div>
-    ${data.panelEmail ? `<div class="meta-item"><span style="color:#6b7280;">Panel Email: </span><strong>${esc(data.panelEmail)}</strong></div>` : ''}
     <div class="meta-item"><span style="color:#6b7280;">Completed Stages: </span><strong>${data.completedStages?.length || 0} / 4</strong></div>
   </div>
-
-  ${panels.length ? `
-  <div class="pdf-block" style="border:1px solid #e5e7eb;background:#f9fafb;border-radius:4px;padding:10px 14px;margin-bottom:20px;">
-    <p style="font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.08em;margin:0 0 4px;">Panels Evaluated</p>
-    <p style="font-size:11px;color:#111827;margin:0;font-weight:600;">${panels.map(esc).join('&nbsp; ·&nbsp; ')}</p>
-  </div>` : ''}
 
   ${body}
 

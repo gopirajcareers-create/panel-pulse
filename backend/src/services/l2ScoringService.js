@@ -264,6 +264,10 @@ For EACH dimension:
 3. List up to 8 evidence items per dimension. If the panel probed 5 different
    JD technologies, report 5 items with 5 different topics — never one
    representative example.
+4. 8 is a CEILING, not a target. Never repeat a question to fill the list: if the
+   panel asked one question relevant to a dimension, report exactly one item. The
+   same sentence listed twice is not two questions, and padding a thin dimension
+   makes a panel that asked one thing look like a panel that asked eight.
 
 L2 is a senior-level round, so weight your reading of "related to this dimension"
 toward design, scalability, trade-offs, scenarios, and ownership rather than basic
@@ -343,14 +347,19 @@ function _clampScores(parsed, hasL1 = true) {
   if (!parsed) throw new Error('Empty LLM response');
 
   // ── Normalise the evidence into tagged items ──
+  // coerceEvidenceItems collapses repeats of the same question — see the note in
+  // l1ScoringService: a model asked for "up to 8 items" pads a thin dimension by
+  // quoting one question eight times, which reads as eight subjects probed.
   const evidenceDetail = {};
   const emptyDims = [];
+  const repeated = [];
   for (const dim of Object.keys(L2_DIMENSIONS)) {
-    const items = coerceEvidenceItems(
-      parsed.evidence_detail?.[dim] ?? parsed.evidence?.[dim]
-    );
+    const rawItems = parsed.evidence_detail?.[dim] ?? parsed.evidence?.[dim];
+    const items = coerceEvidenceItems(rawItems);
+    const rawCount = Array.isArray(rawItems) ? rawItems.length : 0;
     evidenceDetail[dim] = items;
     if (!items.length) emptyDims.push(dim);
+    if (rawCount > items.length) repeated.push(`${dim} (${rawCount} → ${items.length})`);
   }
 
   const depthClaims = {};
@@ -419,6 +428,10 @@ function _clampScores(parsed, hasL1 = true) {
     console.warn(`[L2Scoring] Evidence missing topic tags — breadth may be undercounted: ${untagged.join('; ')}`);
   }
 
+  if (repeated.length) {
+    console.warn(`[L2Scoring] Repeated or empty evidence collapsed — the panel asked less than the list suggested: ${repeated.join('; ')}`);
+  }
+
   parsed.scoring_warnings = {
     dimensions_without_evidence: emptyDims,
     capped_dimensions: capped,
@@ -426,6 +439,7 @@ function _clampScores(parsed, hasL1 = true) {
     dropped_categories: unrecognised,
     full_marks_denied: fullMarksDenied,
     untagged_evidence: untagged,
+    collapsed_evidence: repeated,
   };
 
   return parsed;
@@ -619,8 +633,9 @@ async function runL2Evaluation(input) {
     question_turns_by_speaker: panelQuestionCounts,
     // v5: dimension scores are DERIVED IN CODE from tiered evidence counts rather
     // than chosen by the model. Scores are not comparable with earlier versions.
+    // v6: repeated quotes are collapsed before counting — see l1ScoringService.
     scoring_method: 'evidence-tier',
-    rubric_version: 'l2-v5-evidence-tier',
+    rubric_version: 'l2-v6-evidence-tier',
   };
 
   console.log(`[L2Scoring] Evaluation complete — jobId=${jobId}`);

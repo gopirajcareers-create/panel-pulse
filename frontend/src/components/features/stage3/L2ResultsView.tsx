@@ -17,6 +17,7 @@ import {
   Shield, ShieldCheck, ShieldAlert, AlertTriangle,
   Brain, Star, Zap, Target, FileCode, Info,
 } from 'lucide-react';
+import { dedupeEvidence } from '@/lib/utils/evidence';
 
 // ─── Dimension Config ─────────────────────────────────────────────────────────
 
@@ -249,7 +250,8 @@ export function L2ResultsView({ stageData, panelName }: Props) {
               const sc = typeof ev.categories?.[dim.name] === 'number' ? ev.categories[dim.name] : 0;
               const pct = Math.round((sc / dim.max) * 100);
               const clr = COLOR_MAP[dim.color] ?? COLOR_MAP.sky;
-              const evLines: string[] = Array.isArray(ev.evidence?.[dim.name]) ? ev.evidence[dim.name] : [];
+              // Deduped for the same reason as L1 — see L1ResultsView.
+              const evLines: string[] = dedupeEvidence(ev.evidence?.[dim.name]);
               const summary: string = ev.dimension_summaries?.[dim.name] ?? '';
               return (
                 <DimensionCard

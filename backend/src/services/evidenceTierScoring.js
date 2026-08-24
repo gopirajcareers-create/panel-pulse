@@ -54,6 +54,15 @@
  * like three skills covered. The unit is the distinct TOPIC probed, so breadth
  * means breadth.
  *
+ * That protects against rephrasings but not against the same sentence returned
+ * twice, because the topic tag is the model's and it does not tag repeats
+ * consistently. On JD SAAS_QA/Dharshini the model padded every dimension to the 8
+ * items the prompt allows by repeating ONE question, tagging the copies with
+ * different topics — so a single "in case it is not working, how will you do it?"
+ * counted as five subjects probed and took Hands-on Validation to full marks.
+ * Identical quotes are therefore collapsed before anything is counted: one
+ * question asked once is one piece of evidence, whatever it was tagged with.
+ *
  * ── Three different units ────────────────────────────────────────────────────
  *   distinct topics       — breadth. The unit for most dimensions.
  *   depth-probing topics  — subjects probed with "how"/"why"/"what if" rather than
@@ -385,6 +394,52 @@ function deriveTier(units, { chains = 0, depthTopics = 0 } = {}) {
 }
 
 /**
+ * Identity of a quote for duplicate detection: case, whitespace and punctuation are
+ * not what makes two questions different. Compares the WHOLE quote rather than a
+ * prefix, so two long questions that open the same way stay distinct.
+ *
+ * @param {string} quote
+ * @returns {string}
+ */
+function quoteKey(quote) {
+  return String(quote || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/**
+ * Collapse repeats of the same question into one evidence item.
+ *
+ * A model asked for "up to 8 items" will pad a thin dimension by repeating a
+ * question, and the copies do not carry the same topic tag — see the header note.
+ * Every count downstream (breadth, depth breadth, chains) is per-item, so the
+ * padding bought breadth the interview never had and manufactured follow-up chains
+ * out of pure repetition, the one thing followUpChains exists to refuse.
+ *
+ * The first occurrence wins for quote and topic, and the boolean flags are OR'd
+ * across the copies: dropping a probes_depth=true duplicate of an untagged first
+ * copy would lose real signal.
+ *
+ * @param {Array<{quote:string, topic:string, probes_depth:boolean, follows_up:boolean}>} items
+ * @returns {Array<{quote:string, topic:string, probes_depth:boolean, follows_up:boolean}>}
+ */
+function dedupeEvidenceItems(items) {
+  const byQuote = new Map();
+  for (const item of items || []) {
+    const key = quoteKey(item?.quote);
+    if (!key) continue;
+    const seen = byQuote.get(key);
+    if (!seen) {
+      byQuote.set(key, { ...item });
+      continue;
+    }
+    seen.probes_depth = seen.probes_depth || item.probes_depth === true;
+    seen.follows_up = seen.follows_up || item.follows_up === true;
+    // A later copy can carry the tag the first one lacked.
+    if (!seen.topic && item.topic) seen.topic = item.topic;
+  }
+  return [...byQuote.values()];
+}
+
+/**
  * Coerce whatever the model returned for a dimension into evidence items.
  *
  * Shared by L1 and L2 so the two cannot drift: a field dropped here silently
@@ -396,12 +451,16 @@ function deriveTier(units, { chains = 0, depthTopics = 0 } = {}) {
  * transcripts get re-scored and an older model response must not crash the run.
  * A bare string becomes an untagged item, which still counts once toward breadth.
  *
+ * Repeats are collapsed here rather than at each call site so the scores and the
+ * quotes shown in the UI and the downloaded report come from one list — a report
+ * that prints eight copies of a question the scorer counted once is unauditable.
+ *
  * @param {Array<object|string>} raw
  * @returns {Array<{quote:string, topic:string, probes_depth:boolean, follows_up:boolean}>}
  */
 function coerceEvidenceItems(raw) {
   if (!Array.isArray(raw)) return [];
-  return raw.map(item => {
+  const items = raw.map(item => {
     if (typeof item === 'string') {
       return { quote: item.trim(), topic: '', probes_depth: false, follows_up: false };
     }
@@ -415,6 +474,8 @@ function coerceEvidenceItems(raw) {
     }
     return null;
   }).filter(it => it && it.quote);
+
+  return dedupeEvidenceItems(items);
 }
 
 /**
@@ -481,6 +542,8 @@ function scoreFromEvidence({ dimensions, evidenceDetail, depthClaims = {}, model
 module.exports = {
   scoreFromEvidence,
   coerceEvidenceItems,
+  dedupeEvidenceItems,
+  quoteKey,
   deriveTier,
   looksDepthProbing,
   looksNonTechnical,

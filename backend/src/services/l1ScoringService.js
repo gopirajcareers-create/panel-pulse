@@ -205,6 +205,10 @@ For EACH dimension:
 3. List up to 8 evidence items per dimension. If the panel probed 5 different
    JD technologies, report 5 items with 5 different topics — never one
    representative example.
+4. 8 is a CEILING, not a target. Never repeat a question to fill the list: if the
+   panel asked one question relevant to a dimension, report exactly one item. The
+   same sentence listed twice is not two questions, and padding a thin dimension
+   makes a panel that asked one thing look like a panel that asked eight.
 
 How the score follows from your evidence (for your understanding — do not compute it):
   - 1-2 subjects probed     -> 25% of the dimension max
@@ -290,14 +294,21 @@ function _clampScores(parsed) {
   if (!parsed) throw new Error('Empty LLM response');
 
   // ── Normalise the evidence into tagged items ──
+  // coerceEvidenceItems collapses repeats of the same question. Asked for "up to 8
+  // items", the model pads a thin dimension by quoting one question eight times under
+  // eight different topics, which reads as eight subjects probed. The drop is recorded
+  // per dimension because it is the signal that the interview was thinner than the
+  // evidence list looked.
   const evidenceDetail = {};
   const emptyDims = [];
+  const repeated = [];
   for (const dim of Object.keys(L1_DIMENSIONS)) {
-    const items = coerceEvidenceItems(
-      parsed.evidence_detail?.[dim] ?? parsed.evidence?.[dim]
-    );
+    const rawItems = parsed.evidence_detail?.[dim] ?? parsed.evidence?.[dim];
+    const items = coerceEvidenceItems(rawItems);
+    const rawCount = Array.isArray(rawItems) ? rawItems.length : 0;
     evidenceDetail[dim] = items;
     if (!items.length) emptyDims.push(dim);
+    if (rawCount > items.length) repeated.push(`${dim} (${rawCount} → ${items.length})`);
   }
 
   const depthClaims = {};
@@ -357,12 +368,17 @@ function _clampScores(parsed) {
     console.warn(`[L1Scoring] Evidence missing topic tags — breadth may be undercounted: ${untagged.join('; ')}`);
   }
 
+  if (repeated.length) {
+    console.warn(`[L1Scoring] Repeated or empty evidence collapsed — the panel asked less than the list suggested: ${repeated.join('; ')}`);
+  }
+
   parsed.scoring_warnings = {
     dimensions_without_evidence: emptyDims,
     model_score_divergences: divergences,
     dropped_categories: unrecognised,
     full_marks_denied: fullMarksDenied,
     untagged_evidence: untagged,
+    collapsed_evidence: repeated,
   };
 
   return parsed;
@@ -553,8 +569,12 @@ async function runL1Evaluation(input) {
     question_turns_by_speaker: panelQuestionCounts,
     // v5: dimension scores are DERIVED IN CODE from tiered evidence counts rather
     // than chosen by the model. Scores are not comparable with earlier versions.
+    // v6: repeated quotes are collapsed before counting, so a dimension padded with
+    // eight copies of one question counts one subject. A v5 record with padded
+    // evidence scores higher than the same evidence under v6 — hence the bump, so a
+    // 7.8 and a 4.3 for one transcript are distinguishable rather than mysterious.
     scoring_method: 'evidence-tier',
-    rubric_version: 'l1-v5-evidence-tier',
+    rubric_version: 'l1-v6-evidence-tier',
   };
 
   console.log(`[L1Scoring] Evaluation complete — jobId=${jobId}`);

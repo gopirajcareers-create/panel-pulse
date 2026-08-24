@@ -177,6 +177,32 @@ describe('stage 1 screening block', () => {
     (d.stage1!.analysis as any).matchScore = null;
     expect(buildReportHTML(d, 'stage1', AT)).toContain('Not calculable');
   });
+
+  it('does not print how the match score was calculated', () => {
+    // The derivation is on screen for anyone auditing a number. In the document it read
+    // as the report explaining its own machinery to a reader who wanted the verdict.
+    expect(html).not.toContain('mandatory 1.50/2 x 70');
+    expect(html).not.toContain('Each skill scores Strong 1.0');
+    // The table weights stay — they label which coverage list carries more of the score.
+    expect(html).toContain('70% of the match score');
+  });
+
+  it('does not print the tier-correction notes beside the resume evidence', () => {
+    const d = detail();
+    (d.stage1!.analysis as any).mandatorySkillsMatch[1].audit = {
+      demoted: true, claimed_tier: 'STRONG',
+      demotion_reasons: ['no duration, project, action or outcome accompanies the mention'],
+    };
+    (d.stage1!.analysis as any).additionalSkillsMatch[0].audit = {
+      promoted: true, claimed_tier: 'NONE',
+      demotion_reasons: ['"Cypress" appears verbatim in the resume'],
+    };
+    const withAudit = buildReportHTML(d, 'stage1', AT);
+    expect(withAudit).not.toContain('Downgraded from');
+    expect(withAudit).not.toContain('Corrected upward');
+    // The resume evidence itself is untouched.
+    expect(withAudit).toContain('Listed in skills, no project context');
+  });
 });
 
 describe('per-panel sections', () => {
@@ -191,10 +217,17 @@ describe('per-panel sections', () => {
     expect(html).toMatch(/Vikram Iyer[\s\S]{0,400}22 Mar 2026/);
   });
 
-  it('lists the roster of panels who evaluated the candidate', () => {
-    expect(html).toContain('Panels Evaluated');
-    expect(html).toContain('L1 — Ananya Rao (18 Mar 2026)');
-    expect(html).toContain('L2 — Vikram Iyer (22 Mar 2026)');
+  it('states panel identity per round only, never once for the whole document', () => {
+    // The header used to carry a "Panel Email" chip and a "Panels Evaluated" roster.
+    // Both made a document-wide claim about people who each ran one round — the email is
+    // whoever submitted last — so a reader took the name at the top as "the panel" for
+    // every section below it.
+    expect(html).not.toContain('Panels Evaluated');
+    expect(html).not.toContain('Panel Email');
+    expect(html).not.toContain('vikram@example.com');
+    // Each round still names its own panel, which is where it belongs.
+    expect(html).toMatch(/L1 Interview Panel[\s\S]{0,300}Ananya Rao/);
+    expect(html).toMatch(/L2 Interview Panel[\s\S]{0,300}Vikram Iyer/);
   });
 
   it('does not attribute a hiring outcome to the L1 round, which has none', () => {
@@ -242,6 +275,23 @@ describe('scoring breakdown', () => {
     const html = buildReportHTML(detail(), 'stage2', AT);
     expect(html).toContain('Can you walk me through your Selenium grid setup?');
     expect(html).toContain('Probed Selenium waits but stopped at surface level.');
+  });
+
+  it('prints a repeated question once', () => {
+    // Records scored before the backend collapsed repeats carry one question listed up
+    // to eight times — the scoring prompt allows 8 items and the model padded thin
+    // dimensions to fill it. Printed verbatim it buried the dimension summary under a
+    // wall of the same sentence (SAAS_QA/Dharshini, every L1 dimension).
+    const d = detail();
+    const q = 'So what is the framework you are using? TestNG or Cucumber?';
+    (d.stage2!.evaluation as any).evidence['Framework Knowledge'] = [
+      q, q, `  ${q}  `, q.toUpperCase(), 'And how do you run them in parallel?',
+    ];
+    const html = buildReportHTML(d, 'stage2', AT);
+    const occurrences = html.split('TestNG or Cucumber').length - 1;
+    expect(occurrences).toBe(1);
+    // A genuinely different question is still its own item.
+    expect(html).toContain('And how do you run them in parallel?');
   });
 });
 
@@ -315,7 +365,6 @@ describe('report assembly', () => {
     const html = buildReportHTML(d, 'overall', AT);
     expect(html).toContain('Screening Result');
     expect(html).not.toContain('L1 Interview Panel');
-    expect(html).not.toContain('Panels Evaluated');
   });
 
   it('escapes candidate-supplied text so it cannot break out of the document', () => {

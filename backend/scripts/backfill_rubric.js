@@ -17,6 +17,12 @@
  * (3 subjects + 2 how-questions went 2.0 -> 1.0), so pre-change totals sit roughly
  * 2-3 points above post-change ones for identical evidence.
  *
+ * v6 (repeated quotes collapsed before counting) moves records much further where the
+ * model padded a dimension with copies of one question: eight copies tagged with eight
+ * topics used to count as eight subjects probed. A padded dimension can fall from full
+ * marks to 25%, so expect large drops on those records specifically — the numbers are
+ * moving toward what the transcript supports, not away from it.
+ *
  * ── Why no LLM call ──────────────────────────────────────────────────────────
  * Scores derive from stored evidence IN CODE, so re-deriving needs no model. That is
  * what makes backfilling the whole collection viable: rescore.js re-runs the model
@@ -67,14 +73,14 @@ const STAGES = {
     at: 'stage2',
     dims: L1_DIMENSIONS,
     max: MAX_L1_SCORE,
-    rubric: 'l1-v5-evidence-tier',
+    rubric: 'l1-v6-evidence-tier',
   },
   l2: {
     label: 'L2',
     at: 'stage3',
     dims: L2_DIMENSIONS,
     max: MAX_L2_SCORE,
-    rubric: 'l2-v5-evidence-tier',
+    rubric: 'l2-v6-evidence-tier',
   },
 };
 

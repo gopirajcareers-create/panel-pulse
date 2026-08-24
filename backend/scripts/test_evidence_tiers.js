@@ -10,6 +10,7 @@
 const {
   deriveTier, tierToStep, distinctTopics, followUpChains, depthProbingTopics,
   looksDepthProbing, looksNonTechnical, normalizeTopic, scoreFromEvidence,
+  coerceEvidenceItems,
 } = require('../src/services/evidenceTierScoring');
 
 let failures = 0;
@@ -297,6 +298,46 @@ eq('exceptional panel -> 10.0',
 eq('...on 7 distinct subjects', strong.audit['Mandatory Skill Coverage'].distinct_topics, 7);
 eq('...with 5 depth subjects', strong.audit['Technical Depth'].depth_probing_topics, 5);
 eq('...and 2 real chains', strong.audit['Mandatory Skill Coverage'].follow_up_chains, 2);
+
+console.log('\n=== regression: a padded evidence list must not buy breadth ===');
+// SAAS_QA/Dharshini: asked for "up to 8 items", the model quoted ONE question eight
+// times and tagged the copies with different topics, so a single "in case it is not
+// working, how will you do it?" counted as 8 subjects probed with depth on all of
+// them — full marks on Hands-on Validation for one question, and manufactured chains
+// out of pure repetition. Repeats are collapsed before anything is counted.
+const PADDED = Array.from({ length: 8 }, (_, i) => ({
+  quote: 'In some case, in case is not working. How will you do it?',
+  topic: ['Selenium', 'TestNG', 'waits', 'retries', 'grid', 'reporting', 'CI', 'Docker'][i],
+  probes_depth: true,
+}));
+const padded = coerceEvidenceItems(PADDED);
+eq('8 copies of one question -> 1 item', padded.length, 1);
+eq('...counting 1 subject', distinctTopics(padded).topics.length, 1);
+eq('...and no chain', followUpChains(padded), 0);
+const paddedScore = scoreFromEvidence({
+  dimensions: { 'Hands-on Validation': { max: 1.0, steps: GRID_1 } },
+  evidenceDetail: { 'Hands-on Validation': padded },
+});
+eq('...scoring 0.25/1.0, not full marks', paddedScore.scores['Hands-on Validation'], 0.25);
+
+// Whitespace, case and punctuation do not make two questions different; a genuinely
+// different question still counts.
+eq('case and spacing variants collapse',
+  coerceEvidenceItems([
+    'So which framework are you using?',
+    '  so which framework are you using  ',
+    'SO WHICH FRAMEWORK ARE YOU USING?',
+    'And how do you run them in parallel?',
+  ]).length, 2);
+
+// A flag set on a later copy is not lost when the copies collapse.
+const merged = coerceEvidenceItems([
+  { quote: 'Tell me more about that trade-off.', topic: '' },
+  { quote: 'Tell me more about that trade-off.', topic: 'caching', probes_depth: true, follows_up: true },
+]);
+eq('flags OR across collapsed copies',
+  [merged.length, merged[0].topic, merged[0].probes_depth, merged[0].follows_up],
+  [1, 'caching', true, true]);
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`);
 process.exit(failures ? 1 : 0);
