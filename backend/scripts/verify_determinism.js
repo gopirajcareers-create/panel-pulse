@@ -29,6 +29,7 @@ const { runScreening } = require('../src/services/screeningService');
 const { runL1Evaluation } = require('../src/services/l1ScoringService');
 const { runL2Evaluation, L2_DIMENSIONS } = require('../src/services/l2ScoringService');
 const { L1_DIMENSIONS } = require('../src/services/l1ScoringService');
+const { GRADE_CREDIT } = require('../src/services/skillMatchScoring');
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`);
@@ -216,6 +217,15 @@ function evaluationChecks(dimensions) {
             screeningRows(a).every(r =>
               ['STRONG', 'PARTIAL', 'NONE'].includes(r.tier) && typeof r.credit === 'number'));
 
+          // The grade is where credit comes from, so a row whose credit does not match
+          // its grade is a score that cannot be reproduced from what the UI shows.
+          assert('every credit matches its grade',
+            screeningRows(a).every(r => r.credit === GRADE_CREDIT[r.grade]));
+          assert('every PARTIAL row carries a grade, and only PARTIAL rows do',
+            screeningRows(a).every(r => r.tier !== 'PARTIAL'
+              ? r.grade === r.tier
+              : ['PARTIAL_HIGH', 'PARTIAL_MID', 'PARTIAL_LOW'].includes(r.grade)));
+
           // A NONE row with no explanation is the "Not found in resume" that the old
           // silent-truncation path produced, and it is indistinguishable from a real gap.
           assert('every skill carries evidence explaining its tier',
@@ -226,7 +236,7 @@ function evaluationChecks(dimensions) {
             (a.reconciliation?.goodToHaveMissing?.length || 0) === 0);
 
           assert(`rubric_version recorded (${a.scoring_meta.rubric_version})`,
-            String(a.scoring_meta.rubric_version || '').includes('screening-v2'));
+            /^screening-v\d/.test(String(a.scoring_meta.rubric_version || '')));
 
           // The self-contradiction check. A NONE row for a skill the resume names verbatim
           // is exactly what produced "strong experience with Cypress" above a Cypress row

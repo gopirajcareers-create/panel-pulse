@@ -18,7 +18,10 @@ import {
   ChevronDown, ChevronUp, Sparkles, Shield, Zap, Loader2, MessageSquare, RotateCcw, Star
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import type { SkillMatchRow, SkillTier } from '@/lib/api/pipeline.api';
+import type { SkillBucketBreakdown, SkillMatchRow, SkillTier } from '@/lib/api/pipeline.api';
+import {
+  GRADE_CREDIT, GRADE_LABEL, bucketBreakupOf, gradeOf, num, tierOfGrade,
+} from '@/lib/utils/skillGrade';
 
 type StageId = 'stage1' | 'stage2' | 'stage3' | 'stage4';
 
@@ -56,10 +59,12 @@ const TIER_STYLE: Record<SkillTier, { label: string; icon: React.ReactNode; chip
  * ones in the collection. Read the tier if present, otherwise map the old boolean to the
  * ends of the scale — an old record cannot be PARTIAL, because that judgement was never
  * made about it.
+ *
+ * Routed through the grade so the chip colour and the credit in its label can never come
+ * from two different readings of the same row.
  */
-function tierOf(row: Pick<SkillMatchRow, 'tier' | 'matched'>): SkillTier {
-  if (row.tier === 'STRONG' || row.tier === 'PARTIAL' || row.tier === 'NONE') return row.tier;
-  return row.matched ? 'STRONG' : 'NONE';
+function tierOf(row: Partial<SkillMatchRow>): SkillTier {
+  return tierOfGrade(gradeOf(row));
 }
 
 const STAGES = [
@@ -327,9 +332,16 @@ export default function CandidateResultsPage() {
                         </p>
                         <p className="pt-1 border-t border-white/10">
                           <strong className="text-slate-300 font-bold">How the score is built:</strong> each
-                          skill scores Strong 1.0, Partial 0.5 or Not found 0. Mandatory skills carry 70% of the
-                          total and good-to-have 30%; if one list is empty the other carries the full 100%.
-                          The percentage is calculated from the tiers shown below — it is not a separate judgement.
+                          skill earns credit for how well the resume evidences it — Strong 1.0, and a Partial
+                          1.0, 0.75 or 0.5 depending on whether the resume names it with supporting context,
+                          only names it, or does not name it at all. Not found earns 0.
+                        </p>
+                        <p>
+                          <strong className="text-slate-300 font-bold">Weighting:</strong> mandatory skills
+                          carry 80% of the total and good-to-have 20%, so a full good-to-have list cannot
+                          make up for a missing mandatory one; if either list is empty the other carries the
+                          full 100%. The percentage is calculated from the grades shown below — it is not a
+                          separate judgement.
                         </p>
                       </div>
                       {/* Arrow pointing left */}
@@ -425,12 +437,11 @@ export default function CandidateResultsPage() {
                 </h3>
                 <TierCensus rows={analysis.mandatorySkillsMatch || []} />
               </div>
-              {analysis.scoreBreakdown && (
-                <p className="text-[11px] text-text-muted">
-                  Weighted {analysis.scoreBreakdown.mandatory.weight}% of the match score
-                  {analysis.scoreBreakdown.weights_redistributed && ' (raised because the other bucket is empty)'}
-                </p>
-              )}
+              <BucketBreakupLine
+                bucket={analysis.scoreBreakdown?.mandatory}
+                rows={analysis.mandatorySkillsMatch || []}
+                redistributed={analysis.scoreBreakdown?.weights_redistributed}
+              />
               <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
                 {analysis.mandatorySkillsMatch?.length
                   ? analysis.mandatorySkillsMatch.map((item, idx) => <SkillMatchItem key={idx} row={item} />)
@@ -447,11 +458,11 @@ export default function CandidateResultsPage() {
                 </h3>
                 <TierCensus rows={analysis.additionalSkillsMatch || []} />
               </div>
-              {analysis.scoreBreakdown && (
-                <p className="text-[11px] text-text-muted">
-                  Weighted {analysis.scoreBreakdown.goodToHave.weight}% of the match score
-                </p>
-              )}
+              <BucketBreakupLine
+                bucket={analysis.scoreBreakdown?.goodToHave}
+                rows={analysis.additionalSkillsMatch || []}
+                redistributed={analysis.scoreBreakdown?.weights_redistributed}
+              />
               <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
                 {analysis.additionalSkillsMatch?.length
                   ? analysis.additionalSkillsMatch.map((item, idx) => <SkillMatchItem key={idx} row={item} />)
@@ -836,23 +847,35 @@ function L1QuestionsPanel({ questions, generating, error, onGenerate }: {
  * from the screen and was the shape of the original inconsistency complaint.
  */
 function SkillMatchItem({ row }: { row: SkillMatchRow }) {
-  const tier = tierOf(row);
-  const style = TIER_STYLE[tier];
+  const grade = gradeOf(row);
+  const style = TIER_STYLE[tierOfGrade(grade)];
   const demotion = row.audit?.demoted ? row.audit.demotion_reasons : null;
   // A promotion is the opposite correction: the model said absent, the resume says
   // otherwise. Shown in emerald, not amber — nothing was taken away from the candidate.
   const promotion = row.audit?.promoted ? row.audit.demotion_reasons : null;
+  // What the row was cut down FROM. Reported as the grade rather than the tier because a
+  // claimed Partial cut to 0.5 keeps its tier — reading "Downgraded from PARTIAL" beside a
+  // row labelled Partial is the kind of note a reader concludes is a rendering fault.
+  const claimedFrom = row.audit?.claimed_grade
+    ? GRADE_LABEL[row.audit.claimed_grade]
+    : row.audit?.claimed_tier;
 
   return (
     <div className="bg-white/[0.01] border border-white/[0.04] p-3.5 rounded-lg flex items-start gap-3.5">
-      <span className={`p-1 rounded mt-0.5 shrink-0 ${style.chip}`} title={style.label}>
+      <span className={`p-1 rounded mt-0.5 shrink-0 ${style.chip}`} title={GRADE_LABEL[grade]}>
         {style.icon}
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <p className="text-sm font-bold text-text-primary truncate">{row.skill}</p>
-          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${style.chip}`}>
-            {style.label}
+          {/* The credit is in the label, not only in the tooltip: it is the number this
+              row contributes to the score, and a reader comparing two amber rows has no
+              other way to see that one of them is worth twice the other. */}
+          <span
+            className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${style.chip}`}
+            title={row.audit?.grade_reason || undefined}
+          >
+            {GRADE_LABEL[grade]}
           </span>
           {row.source === 'ai-suggested' && (
             <span
@@ -864,9 +887,17 @@ function SkillMatchItem({ row }: { row: SkillMatchRow }) {
           )}
         </div>
         <p className="text-xs text-text-muted mt-1 leading-relaxed">{row.evidence}</p>
+        {/* Only for partials, and this is the row where it matters: it is the answer to
+            "why is this one worth 0.75 and that one 0.5?", which the evidence text above
+            describes but never quantifies. A Strong or Not found needs no such note. */}
+        {tierOfGrade(grade) === 'PARTIAL' && row.audit?.grade_reason && (
+          <p className="text-[11px] text-text-muted/80 mt-1.5 leading-relaxed italic">
+            Credited {num(GRADE_CREDIT[grade])} of 1.0 — {row.audit.grade_reason}
+          </p>
+        )}
         {demotion && demotion.length > 0 && (
           <p className="text-[11px] text-amber-400/70 mt-1.5 leading-relaxed">
-            Downgraded from {row.audit!.claimed_tier}: {demotion.join('; ')}.
+            Downgraded from {claimedFrom}: {demotion.join('; ')}.
           </p>
         )}
         {promotion && promotion.length > 0 && (
@@ -875,6 +906,38 @@ function SkillMatchItem({ row }: { row: SkillMatchRow }) {
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * How this bucket's weight turned into points.
+ *
+ * Only the weight used to be shown, which left "Weighted 80% of the match score" above
+ * four skills and a total of 45% with nothing on screen to connect them. The credit earned
+ * against the number of skills is the missing step, and the partial split is the rest of
+ * it — with three grades of partial, two candidates can show the same "3 Partial" census
+ * and legitimately differ by a full skill's worth of credit.
+ */
+function BucketBreakupLine({ bucket, rows, redistributed }: {
+  bucket?: SkillBucketBreakdown;
+  rows: SkillMatchRow[];
+  redistributed?: boolean;
+}) {
+  const b = bucketBreakupOf(bucket, rows);
+  // No skills means no arithmetic to explain — the empty-list note below says why.
+  if (!b || !b.skills) return null;
+
+  return (
+    <div className="text-[11px] text-text-muted space-y-0.5">
+      <p>
+        Weighted <span className="font-bold text-text-secondary">{b.weight}%</span> of the match
+        score{redistributed && ' (raised because the other list is empty)'} ·{' '}
+        <span className="font-bold text-text-secondary">{num(b.creditEarned)}</span> credit earned
+        of {b.skills} {b.skills === 1 ? 'skill' : 'skills'} →{' '}
+        <span className="font-bold text-orange-400">{num(b.points)} pts</span>
+      </p>
+      {b.partialSplit && <p>Partial credit: {b.partialSplit}</p>}
     </div>
   );
 }

@@ -5,6 +5,7 @@ const { performPanelEvaluation } = require('../services/panelEvaluationService')
 const { runL1Evaluation } = require('../services/l1ScoringService');   // NEW Stage-2 service
 const { runL2Evaluation } = require('../services/l2ScoringService');   // NEW Stage-3 service
 const { runScreening, appendScreeningHistory } = require('../services/screeningService');
+const { gradeOf, GRADE_CREDIT } = require('../services/skillMatchScoring');
 const { callLLM, checkOllamaHealth } = require('../services/llmClient');
 const {
   IDENTITY_COLLATION, normalizeIdentity, identityFilter,
@@ -116,13 +117,20 @@ async function requireScreenedRecord(res, col, identity, stage) {
  *
  * Handles pre-v2 records, where rows carry only `matched`: those become STRONG/NONE,
  * which is what the boolean meant at the time.
+ *
+ * PARTIAL rows are annotated with the credit their grade earns. "PARTIAL" alone spans
+ * everything from a skill named on a three-year project that the model merely hedged on,
+ * to one whose name never appears in the resume — telling an auditor only "PARTIAL"
+ * invites them to read the second as the first.
  */
 function formatSkillTiers(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return '  (none)';
   return rows.map(r => {
     const tier = r.tier || (r.matched ? 'STRONG' : 'NONE');
+    const grade = gradeOf(r);
+    const label = tier === 'PARTIAL' ? `PARTIAL ${GRADE_CREDIT[grade]}` : tier;
     const evidence = String(r.evidence || '').replace(/\s+/g, ' ').slice(0, 200);
-    return `  - [${tier}] ${r.skill}: ${evidence}`;
+    return `  - [${label}] ${r.skill}: ${evidence}`;
   }).join('\n');
 }
 
@@ -733,7 +741,11 @@ ${s1Analysis.skillsProvenance?.mandatoryInferred
   ? 'IMPORTANT: The JD stated NO mandatory skills. The mandatory skills below were INFERRED BY AI from the role, not taken from the JD. Weigh screening accuracy accordingly — a gap against an inferred skill is weaker evidence of a screening failure than a gap against a JD-stated one.'
   : 'Mandatory skills below were explicitly stated in the JD.'}
 
-Mandatory Skills by evidence tier (STRONG = demonstrated with context; PARTIAL = mentioned only, no supporting detail; NONE = absent):
+Mandatory Skills by evidence tier. STRONG = named and demonstrated with context. NONE = absent
+from the resume. PARTIAL carries the credit it earned out of 1.0: 1.0 = the resume fully backs it
+and only the screening model hedged; 0.75 = named but only named, no project or duration behind
+it; 0.5 = the skill's own name is absent and the match was inferred from nearby text. A 0.5 is
+the weakest evidence on this list — treat it as unverified rather than as a confirmed match:
 ${formatSkillTiers(s1Analysis.mandatorySkillsMatch)}
 
 Good-to-Have Skills by evidence tier:
@@ -952,9 +964,19 @@ router.post('/generate-l1-questions', async (req, res) => {
     // probe — a STRONG match is already evidenced, a PARTIAL or NONE is an open
     // question. Passing the tiers turns generic coverage questions into questions
     // aimed at this candidate's actual gaps.
+    //
+    // A PARTIAL_HIGH belongs on this list despite earning full credit: full credit means
+    // the resume backs the claim, not that anyone verified the depth. The grade goes with
+    // it so the questions can be pitched at how thin the evidence actually is.
     const unverified = [...(s1.mandatorySkillsMatch || []), ...(s1.additionalSkillsMatch || [])]
       .filter(r => (r.tier || (r.matched ? 'STRONG' : 'NONE')) !== 'STRONG')
-      .map(r => `${r.skill} (${r.tier || (r.matched ? 'STRONG' : 'NONE')})`);
+      .map(r => {
+        const grade = gradeOf(r);
+        // Same annotation the Stage 4 audit prompt uses, so one vocabulary covers both.
+        return grade === 'NONE'
+          ? `${r.skill} (NONE — no resume evidence)`
+          : `${r.skill} (PARTIAL, credited ${GRADE_CREDIT[grade]} of 1.0)`;
+      });
 
     const systemPrompt = `You are a world-class Senior Technical Recruiter and L1 Interview Coach with 15+ years of experience conducting structured technical interviews.
 

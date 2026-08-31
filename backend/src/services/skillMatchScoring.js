@@ -18,17 +18,38 @@
  * that evidence. An auditor can re-read the quotes and reproduce the percentage by
  * hand, which is the point.
  *
- * ── Tiers ────────────────────────────────────────────────────────────────────
- *   STRONG   1.0  — named with supporting context: duration, a project, an action,
- *                   or a measurable outcome.
- *   PARTIAL  0.5  — present but thin: a bare skills-list mention, or evidence that
- *                   only implies the skill.
- *   NONE     0    — absent from the resume.
+ * ── Tiers and grades ─────────────────────────────────────────────────────────
+ * Three TIERS decide the shape of the verdict — STRONG / PARTIAL / NONE — and they
+ * are what the UI colours, the report prints and Stage 4's audit prompt reads.
  *
  * Three tiers rather than a boolean because a boolean is a coin flip on borderline
  * evidence. "Listed under Skills, no project" is genuinely between yes and no, and
- * forcing it to a side moved the whole score by 70/N between runs of the same
+ * forcing it to a side moved the whole score by 80/N between runs of the same
  * record — the single largest contributor to the instability this module fixes.
+ *
+ * But PARTIAL then covered too much ground to be one number. A skill named in the
+ * resume, in a project, with a duration, that the model merely declined to call
+ * STRONG scored 0.5 — identical to a skill whose name appears nowhere and was
+ * inferred from surrounding prose. Those are not the same candidate. So the PARTIAL
+ * tier carries a GRADE, and the credit comes from the grade:
+ *
+ *   STRONG        1.00  — claimed strong, and the resume backs every check.
+ *   PARTIAL_HIGH  1.00  — the model hedged, the resume did not: named, with
+ *                         duration / project / action / outcome behind it. Full
+ *                         credit, because the evidence is a STRONG match and only
+ *                         the model's own caution held it back.
+ *   PARTIAL_MID   0.75  — named in the resume, but only named: a bare skills-list
+ *                         mention with no context. Familiarity, not demonstrated use.
+ *   PARTIAL_LOW   0.50  — the skill's own name is absent; the match is inferred from
+ *                         surrounding evidence. Also where a skill the model never
+ *                         reported on lands, since an unexamined skill is not a
+ *                         verified one.
+ *   NONE          0     — absent from the resume, or the quote is not in it.
+ *
+ * Note what is NOT a grade boundary: `looks_like_skills_list`. It is computed as
+ * "list-shaped AND no context markers", so it can only ever fire alongside the
+ * no-context check and never decides a grade by itself. It stays a demotion REASON,
+ * because it is the clearest way to say why a row is only mid-graded.
  *
  * ── Why nothing here trusts the model's tier outright ────────────────────────
  * Same lesson as evidenceTierScoring, whose header records model flags coming back
@@ -44,17 +65,31 @@
 
 'use strict';
 
-// Credit awarded per tier, as a fraction of one skill's worth of the bucket.
-const TIER_CREDIT = { STRONG: 1.0, PARTIAL: 0.5, NONE: 0 };
+// Credit awarded per GRADE, as a fraction of one skill's worth of the bucket.
+// See the header for what each grade means and why HIGH is paid in full.
+const GRADE_CREDIT = {
+  STRONG: 1.0,
+  PARTIAL_HIGH: 1.0,
+  PARTIAL_MID: 0.75,
+  PARTIAL_LOW: 0.5,
+  NONE: 0,
+};
 
 // Ordered weakest → strongest, so a demotion is `min(claimed, allowed)` by index.
 const TIER_ORDER = ['NONE', 'PARTIAL', 'STRONG'];
+const GRADE_ORDER = ['NONE', 'PARTIAL_LOW', 'PARTIAL_MID', 'PARTIAL_HIGH', 'STRONG'];
 
-// Bucket weights. Mandatory skills carry most of the score; a good-to-have skill is
-// by definition not disqualifying. When a bucket is EMPTY its weight is redistributed
-// rather than left unearnable — see computeMatchScore.
-const MANDATORY_WEIGHT = 70;
-const GOOD_TO_HAVE_WEIGHT = 30;
+// Bucket weights. Mandatory skills carry the score; a good-to-have skill is by
+// definition not disqualifying, and 20 points is about one status band of headroom —
+// enough to separate two candidates with identical mandatory coverage, not enough to
+// carry either of them across a threshold on good-to-have evidence alone. It was 30,
+// which let 3-of-5 mandatory plus a full good-to-have list reach 72% and read
+// "Eligible" with two must-have skills unevidenced.
+//
+// When a bucket is EMPTY its weight is redistributed rather than left unearnable —
+// see computeMatchScore.
+const MANDATORY_WEIGHT = 80;
+const GOOD_TO_HAVE_WEIGHT = 20;
 
 // Status bands, applied to the final percentage. These match the thresholds the UI
 // tooltip has always shown; the difference is that the band is now derived from the
@@ -279,6 +314,37 @@ function _capTier(claimed, ceiling) {
   return TIER_ORDER[Math.min(TIER_ORDER.indexOf(claimed), TIER_ORDER.indexOf(ceiling))];
 }
 
+/** As _capTier, on the five-value grade ladder. */
+function _capGrade(claimed, ceiling) {
+  return GRADE_ORDER[Math.min(GRADE_ORDER.indexOf(claimed), GRADE_ORDER.indexOf(ceiling))];
+}
+
+/**
+ * The grade of a row, for consumers holding a stored row rather than a fresh verdict.
+ *
+ * Records screened before graded partials carry a `tier` and a `credit` and no `grade`.
+ * Their PARTIAL rows were all worth 0.5, which is this rubric's PARTIAL_LOW — so the
+ * credit IS the grade for those rows, and reading it back is what stops a re-rendered
+ * old record showing "2 partial (0 high, 0 mid, 0 low)".
+ *
+ * Pre-tier records carry only `matched`; a boolean was never a partial judgement.
+ *
+ * @param {object} row
+ * @returns {'STRONG'|'PARTIAL_HIGH'|'PARTIAL_MID'|'PARTIAL_LOW'|'NONE'}
+ */
+function gradeOf(row) {
+  const claimed = String(row?.grade || '').toUpperCase();
+  if (GRADE_ORDER.includes(claimed)) return claimed;
+
+  const tier = TIER_ORDER.includes(row?.tier) ? row.tier : (row?.matched ? 'STRONG' : 'NONE');
+  if (tier !== 'PARTIAL') return tier;
+
+  const credit = Number(row?.credit);
+  if (credit >= 1) return 'PARTIAL_HIGH';
+  if (credit >= 0.75) return 'PARTIAL_MID';
+  return 'PARTIAL_LOW';
+}
+
 /**
  * Normalise whatever the model put in the tier field.
  *
@@ -301,15 +367,21 @@ function coerceClaimedTier(row) {
 }
 
 /**
- * Decide a skill's final tier from the model's claim plus the resume text.
+ * Decide a skill's final tier AND grade from the model's claim plus the resume text.
  *
  * Demotions, in order of severity:
  *   quote absent             → NONE. A match with no evidence is not a match.
  *   quote not in the resume  → NONE. Invented evidence supports nothing.
- *   skill name absent        → PARTIAL ceiling. The evidence is real but the skill
+ *   skill name absent        → PARTIAL_LOW ceiling. The evidence is real but the skill
  *                              is inferred from it, which is not a firm match.
- *   no context markers       → PARTIAL ceiling. Named, but only named.
- *   reads as a skills list   → PARTIAL ceiling. Familiarity, not demonstrated use.
+ *   no context markers       → PARTIAL_MID ceiling. Named, but only named.
+ *   reads as a skills list   → PARTIAL_MID ceiling. Familiarity, not demonstrated use.
+ *                              Never fires alone — see the header note.
+ *
+ * A claim that survives every check keeps its claimed strength: STRONG stays STRONG, and
+ * a PARTIAL the resume fully supports becomes PARTIAL_HIGH, which is paid at full credit.
+ * The model is the only thing holding that row below STRONG, and an 8B model's caution is
+ * not evidence of a weaker candidate.
  *
  * One PROMOTION, and only one: a NONE claim is overturned to PARTIAL when the skill is
  * named verbatim in the resume. Negatives used to be returned unexamined on the grounds
@@ -323,15 +395,20 @@ function coerceClaimedTier(row) {
  * contradicting itself on one screen.
  *
  * PARTIAL, not STRONG, because all this establishes is that the word is present; the
- * model's own reading of the context is not available to replace.
+ * model's own reading of the context is not available to replace. Graded PARTIAL_MID and
+ * not HIGH for the same reason — the name is there, the depth was never assessed.
  *
  * @param {object} row — the model's row for one skill
  * @param {string} skill
  * @param {string} resumeText — FULL resume text
- * @returns {{tier: string, claimedTier: string, credit: number, demoted: boolean,
- *            reasons: string[], signals: object}}
+ * @param {object} [opts]
+ * @param {boolean} [opts.reportedByModel=true] — false when the model omitted this skill
+ *   entirely. Such a row cannot grade above PARTIAL_LOW however plainly the resume names
+ *   the skill: nothing read the surrounding text, so no depth claim exists to credit.
+ * @returns {{tier: string, grade: string, claimedTier: string, credit: number,
+ *            demoted: boolean, reasons: string[], signals: object}}
  */
-function deriveTier(row, skill, resumeText) {
+function deriveTier(row, skill, resumeText, { reportedByModel = true } = {}) {
   const claimedTier = coerceClaimedTier(row);
   const quote = String(row?.evidence ?? row?.quote ?? '').trim();
 
@@ -352,56 +429,100 @@ function deriveTier(row, skill, resumeText) {
   if (claimedTier === 'NONE') {
     // The one place a claim is raised rather than cut. See the header note.
     if (phrase.found) {
+      const grade = reportedByModel ? 'PARTIAL_MID' : 'PARTIAL_LOW';
       return {
         tier: 'PARTIAL',
+        grade,
         claimedTier,
-        credit: TIER_CREDIT.PARTIAL,
+        credit: GRADE_CREDIT[grade],
         demoted: false,
         promoted: true,
         reasons: [
           `the model reported this skill as absent, but "${phrase.phrase}" appears ` +
           `verbatim in the resume — raised to PARTIAL on the resume text`,
         ],
+        gradeReason: reportedByModel
+          ? 'the resume names the skill, but no reading of the surrounding context is ' +
+            'available to credit — graded at three-quarters'
+          : 'the model never examined this skill, so the resume name alone earns the ' +
+            'lowest partial credit',
         // Substituted so the row shows the resume line that overturned the claim
         // instead of "Not found in resume." beside a PARTIAL tier.
         evidenceOverride: phrase.snippet,
         signals,
       };
     }
-    return { tier: 'NONE', claimedTier, credit: 0, demoted: false, promoted: false, reasons, signals };
+    return {
+      tier: 'NONE', grade: 'NONE', claimedTier, credit: 0,
+      demoted: false, promoted: false, reasons, signals,
+      gradeReason: 'the resume neither names the skill nor evidences it',
+    };
   }
+
+  // The claim is the ceiling on both ladders. A claimed PARTIAL that survives every
+  // check is PARTIAL_HIGH; the caps below can only lower it.
+  const claimedGrade = claimedTier === 'STRONG' ? 'STRONG' : 'PARTIAL_HIGH';
+  let grade = claimedGrade;
+  let gradeReason = claimedTier === 'STRONG'
+    ? 'named in the resume with supporting context, and the quote is grounded in it'
+    : 'the model graded this partial, but the resume names the skill with supporting ' +
+      'context — credited as a full match';
 
   if (!quote) {
     reasons.push('no evidence quote supplied — a match without evidence is not scored');
     tier = 'NONE';
+    grade = 'NONE';
+    gradeReason = 'no evidence was supplied to grade';
   } else if (signals.grounding.ratio < GROUNDING_THRESHOLD) {
     reasons.push(
       `evidence not found in the resume (${signals.grounding.matched}/${signals.grounding.total} ` +
       `words present, need ${Math.round(GROUNDING_THRESHOLD * 100)}%)`
     );
     tier = 'NONE';
+    grade = 'NONE';
+    gradeReason = 'the quote does not appear in the resume, so it evidences nothing';
   } else {
+    // Order does not matter: every cap is a min() on the same ladder, so the weakest
+    // ceiling wins whichever fires first. A row that is both unnamed and contextless
+    // lands at PARTIAL_LOW.
     if (!signals.skill_named_in_resume) {
       reasons.push('skill is not named in the resume — inferred from surrounding evidence');
       tier = _capTier(tier, 'PARTIAL');
+      grade = _capGrade(grade, 'PARTIAL_LOW');
+      gradeReason = 'the skill\'s own name is absent from the resume — the match is inferred';
     }
     if (!signals.has_context_markers) {
       reasons.push('no duration, project, action or outcome accompanies the mention');
       tier = _capTier(tier, 'PARTIAL');
+      grade = _capGrade(grade, 'PARTIAL_MID');
+      if (grade === 'PARTIAL_MID') {
+        gradeReason = 'named in the resume but only named — no duration, project, action ' +
+          'or outcome behind it';
+      }
     }
     if (signals.looks_like_skills_list) {
       reasons.push('evidence is a bare technology list, not demonstrated use');
       tier = _capTier(tier, 'PARTIAL');
+      grade = _capGrade(grade, 'PARTIAL_MID');
+      if (grade === 'PARTIAL_MID') {
+        gradeReason = 'the evidence is a bare technology list — familiarity, not demonstrated use';
+      }
     }
   }
 
   return {
     tier,
+    grade,
     claimedTier,
-    credit: TIER_CREDIT[tier],
-    demoted: tier !== claimedTier,
+    claimedGrade,
+    credit: GRADE_CREDIT[grade],
+    // Measured on the GRADE ladder, not the tier: a claimed PARTIAL cut to PARTIAL_LOW
+    // keeps the tier it claimed while losing half its credit, and reporting that as
+    // undemoted would hide the reasons from the row that most needs them.
+    demoted: grade !== claimedGrade,
     promoted: false,
     reasons,
+    gradeReason,
     signals,
   };
 }
@@ -439,7 +560,7 @@ function reconcileRows(requested, rows, resumeText) {
     if (row) consumed.add(key);
     else missing.push(skill);
 
-    const verdict = deriveTier(row || {}, skill, resumeText);
+    const verdict = deriveTier(row || {}, skill, resumeText, { reportedByModel: Boolean(row) });
     const evidence = row
       ? String(row.evidence ?? row.quote ?? '').trim()
       : '';
@@ -448,6 +569,11 @@ function reconcileRows(requested, rows, resumeText) {
       skill,
       source,
       tier: verdict.tier,
+      // The five-value ladder the credit actually comes from. `tier` stays the coarse
+      // STRONG/PARTIAL/NONE because stored records, Stage 4's audit prompt, the report
+      // and the UI's colouring all read it; `grade` is what says how much a PARTIAL is
+      // worth. Both are present so neither consumer has to infer the other.
+      grade: verdict.grade,
       // Retained so stored records, the PDF/HTML report and Stage 4's audit prompt keep
       // reading the field they already read. PARTIAL counts as matched — the tier
       // carries the nuance, and flipping it to false would understate the candidate
@@ -468,9 +594,13 @@ function reconcileRows(requested, rows, resumeText) {
       credit: verdict.credit,
       audit: {
         claimed_tier: verdict.claimedTier,
+        claimed_grade: verdict.claimedGrade || verdict.grade,
         demoted: verdict.demoted,
         promoted: Boolean(verdict.promoted),
         demotion_reasons: verdict.reasons,
+        // One sentence for "why is this only worth 0.75?", which the demotion reasons
+        // answer only obliquely and a full-credit PARTIAL_HIGH does not answer at all.
+        grade_reason: verdict.gradeReason || null,
         reported_by_model: Boolean(row),
         ...verdict.signals,
       },
@@ -539,12 +669,25 @@ function findSummaryContradictions(summary, rows) {
  * Exists so the record always carries a fit statement that cannot disagree with the
  * skill rows, whatever the model's prose does.
  *
+ * The partial count is broken down by credit when a bucket holds partials, because
+ * "3 partial" spans 1.5 credits of range under the graded rubric — a reader told only
+ * the count cannot tell a bucket worth 3.0 from one worth 1.5.
+ *
  * @param {object} breakdown — computeMatchScore's breakdown
  * @returns {string}
  */
 function coverageSentence(breakdown) {
+  const partialDetail = (b) => {
+    const bits = [
+      b.partial_high ? `${b.partial_high} at full credit` : null,
+      b.partial_mid ? `${b.partial_mid} at 0.75` : null,
+      b.partial_low ? `${b.partial_low} at 0.5` : null,
+    ].filter(Boolean);
+    return bits.length ? ` (${bits.join(', ')})` : '';
+  };
   const part = (label, b) => b.skills > 0
-    ? `${label}: ${b.strong} strong, ${b.partial} partial, ${b.none} not evidenced (of ${b.skills})`
+    ? `${label}: ${b.strong} strong, ${b.partial} partial${partialDetail(b)}, ` +
+      `${b.none} not evidenced (of ${b.skills})`
     : null;
   const parts = [
     part('Mandatory', breakdown.mandatory),
@@ -566,11 +709,45 @@ function bucketFraction(rows) {
 }
 
 /**
+ * One bucket's contribution, spelled out.
+ *
+ * The three partial sub-counts are the reason this exists as its own function rather than
+ * two inline literals: `partial: 3` no longer determines what a bucket is worth, so a
+ * breakdown that reports only the tier census cannot be reconciled with `credit_earned`
+ * by the reader. `partial` is kept as the total of the three, so every existing consumer
+ * of the census keeps reading a correct number.
+ *
+ * Grades come through gradeOf, so a bucket of pre-v3 stored rows still reports a census
+ * that adds up instead of three zeroes beside a non-zero `partial`.
+ *
+ * @param {Array<object>} rows
+ * @param {{earned: number, possible: number}} fraction — from bucketFraction
+ * @param {number} weight — after empty-bucket redistribution
+ * @param {number} points — weight x fraction
+ */
+function bucketBreakdown(rows, fraction, weight, points) {
+  const grades = rows.map(gradeOf);
+  const count = (g) => grades.filter(x => x === g).length;
+  return {
+    skills: fraction.possible,
+    credit_earned: Number(fraction.earned.toFixed(2)),
+    weight,
+    points: Number(points.toFixed(2)),
+    strong: count('STRONG'),
+    partial: count('PARTIAL_HIGH') + count('PARTIAL_MID') + count('PARTIAL_LOW'),
+    partial_high: count('PARTIAL_HIGH'),
+    partial_mid: count('PARTIAL_MID'),
+    partial_low: count('PARTIAL_LOW'),
+    none: count('NONE'),
+  };
+}
+
+/**
  * Compute the match percentage, its status band, and a reproducible breakdown.
  *
  * Empty buckets redistribute their weight instead of leaving it unearnable. A JD with
- * no good-to-have skills is ordinary, and holding back 30 points for skills nobody
- * asked about capped a flawless candidate at 70% — read as a reservation about the
+ * no good-to-have skills is ordinary, and holding back 20 points for skills nobody
+ * asked about capped a flawless candidate at 80% — read as a reservation about the
  * candidate when it was an artefact of the JD.
  *
  * @param {object} args
@@ -612,24 +789,8 @@ function computeMatchScore({ mandatoryRows = [], goodToHaveRows = [] }) {
     matchScore,
     status,
     breakdown: {
-      mandatory: {
-        skills: mandatory.possible,
-        credit_earned: Number(mandatory.earned.toFixed(2)),
-        weight: mandatoryWeight,
-        points: Number(mandatoryPoints.toFixed(2)),
-        strong: mandatoryRows.filter(r => r.tier === 'STRONG').length,
-        partial: mandatoryRows.filter(r => r.tier === 'PARTIAL').length,
-        none: mandatoryRows.filter(r => r.tier === 'NONE').length,
-      },
-      goodToHave: {
-        skills: goodToHave.possible,
-        credit_earned: Number(goodToHave.earned.toFixed(2)),
-        weight: goodToHaveWeight,
-        points: Number(goodToHavePoints.toFixed(2)),
-        strong: goodToHaveRows.filter(r => r.tier === 'STRONG').length,
-        partial: goodToHaveRows.filter(r => r.tier === 'PARTIAL').length,
-        none: goodToHaveRows.filter(r => r.tier === 'NONE').length,
-      },
+      mandatory: bucketBreakdown(mandatoryRows, mandatory, mandatoryWeight, mandatoryPoints),
+      goodToHave: bucketBreakdown(goodToHaveRows, goodToHave, goodToHaveWeight, goodToHavePoints),
       // The arithmetic, spelled out, so the UI and the PDF can show the score's
       // derivation rather than asserting a number.
       formula: active.length === 0
@@ -655,7 +816,9 @@ module.exports = {
   coverageSentence,
   deriveTier,
   coerceClaimedTier,
+  gradeOf,
   bucketFraction,
+  bucketBreakdown,
   skillMentioned,
   skillPhraseInResume,
   groundingRatio,
@@ -663,8 +826,9 @@ module.exports = {
   looksLikeSkillsList,
   normalizeForMatch,
   significantTokens,
-  TIER_CREDIT,
+  GRADE_CREDIT,
   TIER_ORDER,
+  GRADE_ORDER,
   MANDATORY_WEIGHT,
   GOOD_TO_HAVE_WEIGHT,
   GROUNDING_THRESHOLD,

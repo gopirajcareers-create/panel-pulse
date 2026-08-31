@@ -106,25 +106,29 @@ function detail(overrides: Partial<PipelineDetail> = {}): PipelineDetail {
       jdText: 'jd',
       resumeText: 'resume',
       analysis: {
-        mandatorySkills: ['Selenium', 'Java'],
+        // One row per grade, so the printed artefact is checked against the whole credit
+        // ladder rather than against Strong and Not found alone.
+        mandatorySkills: ['Selenium', 'Java', 'TestNG', 'Kubernetes'],
         goodToHaveSkills: ['Cypress'],
         keySkills: [],
         mandatorySkillsMatch: [
-          { skill: 'Selenium', tier: 'STRONG', matched: true, credit: 1, evidence: '4 years automating regression suites', source: 'jd' },
-          { skill: 'Java', tier: 'PARTIAL', matched: true, credit: 0.5, evidence: 'Listed in skills, no project context', source: 'jd' },
+          { skill: 'Selenium', tier: 'STRONG', grade: 'STRONG', matched: true, credit: 1, evidence: '4 years automating regression suites', source: 'jd' },
+          { skill: 'Java', tier: 'PARTIAL', grade: 'PARTIAL_MID', matched: true, credit: 0.75, evidence: 'Listed in skills, no project context', source: 'jd' },
+          { skill: 'TestNG', tier: 'PARTIAL', grade: 'PARTIAL_LOW', matched: true, credit: 0.5, evidence: 'Inferred from the automation stack; not named', source: 'jd' },
+          { skill: 'Kubernetes', tier: 'NONE', grade: 'NONE', matched: false, credit: 0, evidence: 'Not found in resume', source: 'jd' },
         ],
         additionalSkillsMatch: [
-          { skill: 'Cypress', tier: 'NONE', matched: false, credit: 0, evidence: 'Not found in resume', source: 'jd' },
+          { skill: 'Cypress', tier: 'PARTIAL', grade: 'PARTIAL_HIGH', matched: true, credit: 1, evidence: 'Named on a 2-year project', source: 'jd' },
         ],
         screeningSummary: 'Solid automation background.',
-        matchScore: 75,
+        matchScore: 65,
         experienceMatch: '6 years against a 5+ requirement.',
-        status: 'Eligible',
-        coverageSummary: '1 Strong, 1 Partial of 2 mandatory.',
+        status: 'Partially Eligible',
+        coverageSummary: 'Mandatory: 1 strong, 2 partial (1 at 0.75, 1 at 0.5), 1 not evidenced (of 4).',
         scoreBreakdown: {
-          mandatory: { count: 2, credit_earned: 1.5, weight: 70, strong: 1, partial: 1, none: 0 },
-          goodToHave: { count: 1, credit_earned: 0, weight: 30, strong: 0, partial: 0, none: 1 },
-          formula: 'mandatory 1.50/2 x 70 + good-to-have 0.00/1 x 30 = 52.5%',
+          mandatory: { skills: 4, credit_earned: 2.25, weight: 80, points: 45, strong: 1, partial: 2, partial_high: 0, partial_mid: 1, partial_low: 1, none: 1 },
+          goodToHave: { skills: 1, credit_earned: 1, weight: 20, points: 20, strong: 0, partial: 1, partial_high: 1, partial_mid: 0, partial_low: 0, none: 0 },
+          formula: 'mandatory 2.25/4 x 80 + good-to-have 1.00/1 x 20 = 65.0%',
           weights_redistributed: false,
         },
       },
@@ -158,8 +162,8 @@ describe('stage 1 screening block', () => {
   const html = buildReportHTML(detail(), 'overall', AT);
 
   it('shows the screening status, match score and experience alignment', () => {
-    expect(html).toContain('Eligible');
-    expect(html).toContain('75%');
+    expect(html).toContain('Partially Eligible');
+    expect(html).toContain('65%');
     expect(html).toContain('6 years against a 5+ requirement.');
   });
 
@@ -169,7 +173,51 @@ describe('stage 1 screening block', () => {
     expect(html).toContain('Listed in skills, no project context');
     // A census, so the reader need not tally rows by eye.
     expect(html).toContain('1 Strong');
-    expect(html).toContain('1 Partial');
+    expect(html).toContain('2 Partial');
+  });
+
+  it('prints what each Partial is worth, not just that it is partial', () => {
+    // Three grades of partial reach the page. Printing them all as "Partial" would tell a
+    // reader who cannot hover a tooltip that Cypress and TestNG are equivalent evidence,
+    // when one is credited at 1.0 and the other at half that.
+    expect(html).toContain('Partial · 1.0');
+    expect(html).toContain('Partial · 0.75');
+    expect(html).toContain('Partial · 0.5');
+  });
+
+  it('shows each coverage list adding up to its own points', () => {
+    // "Weighted 80% of the match score" above four skills and a total of 65% was not
+    // reconcilable on paper. These are the steps between the two.
+    expect(html).toContain('80%</strong> of the match score');
+    expect(html).toContain('2.25');
+    expect(html).toContain('4 skills');
+    expect(html).toContain('45 pts');
+    expect(html).toContain('Partial credit: 1 at 0.75, 1 at 0.5');
+    // And the good-to-have list, whose single partial is credited in full.
+    expect(html).toContain('20 pts');
+    expect(html).toContain('Partial credit: 1 at full credit');
+  });
+
+  it('reads the census off a record stored before partials were graded', () => {
+    // Stored rows carry `tier` with a flat credit of 0.5 and no `grade`, and older ones
+    // carry only `matched`. A re-download must not report them as 0 of every grade.
+    const d = detail();
+    (d.stage1!.analysis as any).mandatorySkillsMatch = [
+      { skill: 'Selenium', matched: true, credit: 1, evidence: 'e', source: 'jd' },
+      { skill: 'Java', tier: 'PARTIAL', matched: true, credit: 0.5, evidence: 'e', source: 'jd' },
+    ];
+    (d.stage1!.analysis as any).scoreBreakdown.mandatory = {
+      count: 2, credit_earned: 1.5, weight: 70, strong: 1, partial: 1, none: 0,
+    };
+    const legacy = buildReportHTML(d, 'stage1', AT);
+    expect(legacy).toContain('1 Strong');
+    expect(legacy).toContain('1 Partial');
+    expect(legacy).toContain('Partial · 0.5');
+    // `count` was this field's earlier name, and `points` was not stored at all — both
+    // are recovered rather than rendered as "of 0" and "0 pts".
+    expect(legacy).toContain('1.5');
+    expect(legacy).toContain('2 skills');
+    expect(legacy).toContain('52.5 pts');
   });
 
   it('renders an uncalculable match score as such, not as 0%', () => {
@@ -178,13 +226,13 @@ describe('stage 1 screening block', () => {
     expect(buildReportHTML(d, 'stage1', AT)).toContain('Not calculable');
   });
 
-  it('does not print how the match score was calculated', () => {
-    // The derivation is on screen for anyone auditing a number. In the document it read
-    // as the report explaining its own machinery to a reader who wanted the verdict.
-    expect(html).not.toContain('mandatory 1.50/2 x 70');
+  it('does not print the combined score formula', () => {
+    // The whole derivation is on screen for anyone auditing the total. In the document it
+    // read as the report explaining its own machinery to a reader who wanted the verdict.
+    // Each bucket's own arithmetic IS printed — see the breakup test above — because that
+    // is what lets a coverage table be checked against the score beside it.
+    expect(html).not.toContain('mandatory 2.25/4 x 80 + good-to-have');
     expect(html).not.toContain('Each skill scores Strong 1.0');
-    // The table weights stay — they label which coverage list carries more of the score.
-    expect(html).toContain('70% of the match score');
   });
 
   it('does not print the tier-correction notes beside the resume evidence', () => {

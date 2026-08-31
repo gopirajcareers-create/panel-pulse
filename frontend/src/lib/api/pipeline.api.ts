@@ -125,22 +125,46 @@ async function pollScoringJob(jobId: string, stage: string): Promise<any> {
  */
 export type SkillTier = 'STRONG' | 'PARTIAL' | 'NONE';
 
+/**
+ * How much a PARTIAL is worth. One flat 0.5 for every partial made "named, on a
+ * three-year project, that the model merely declined to call strong" worth the same as
+ * "the skill's name appears nowhere and we inferred it from nearby prose".
+ *
+ *   PARTIAL_HIGH  1.0   the resume fully backs it; only the model hedged
+ *   PARTIAL_MID   0.75  named, but only named — no project, duration or outcome
+ *   PARTIAL_LOW   0.5   the skill's own name is absent; the match is inferred
+ */
+export type SkillGrade = 'STRONG' | 'PARTIAL_HIGH' | 'PARTIAL_MID' | 'PARTIAL_LOW' | 'NONE';
+
 /** Whether a skill came from the JD or was inferred by AI from the role. */
 export type SkillSource = 'jd' | 'ai-suggested';
 
 export interface SkillMatchRow {
   skill: string;
   tier: SkillTier;
+  /**
+   * The grade the `credit` comes from. Absent on records screened before graded
+   * partials — read it through gradeOf(), which recovers the grade from `credit`.
+   */
+  grade?: SkillGrade;
   /** true for STRONG and PARTIAL. Retained for pre-tier consumers; prefer `tier`. */
   matched: boolean;
   evidence: string;
-  /** STRONG 1.0 / PARTIAL 0.5 / NONE 0 — the number the score is summed from. */
+  /** 1.0 / 0.75 / 0.5 / 0 per `grade` — the number the score is summed from. */
   credit: number;
   source: SkillSource;
   /** Why the backend graded this row as it did, including any demotion of the model's claim. */
   audit?: {
     claimed_tier: SkillTier;
+    /** The grade the model's claim would have earned had every resume check passed. */
+    claimed_grade?: SkillGrade;
     demoted: boolean;
+    /**
+     * One sentence for "why is this only worth 0.75?" — and, on a full-credit
+     * PARTIAL_HIGH, for "why does a Partial count as a full match?", which the
+     * demotion reasons cannot answer because nothing was demoted.
+     */
+    grade_reason?: string | null;
     /**
      * true when the model reported the skill as absent but the resume names it verbatim,
      * so the row was raised NONE → PARTIAL. Distinct from `demoted` because it means the
@@ -156,12 +180,19 @@ export interface SkillMatchRow {
   };
 }
 
-interface SkillBucketBreakdown {
-  count: number;
+export interface SkillBucketBreakdown {
+  /** Skills in this bucket — the denominator. */
+  skills: number;
   credit_earned: number;
   weight: number;
+  /** The bucket's contribution to the match score: credit_earned / skills x weight. */
+  points: number;
   strong: number;
+  /** partial_high + partial_mid + partial_low, so pre-grade census readers still work. */
   partial: number;
+  partial_high: number;
+  partial_mid: number;
+  partial_low: number;
   none: number;
 }
 
@@ -169,7 +200,7 @@ interface SkillBucketBreakdown {
 export interface ScoreBreakdown {
   mandatory: SkillBucketBreakdown;
   goodToHave: SkillBucketBreakdown;
-  /** e.g. "mandatory 1.50/3 x 70 + good-to-have 1.00/1 x 30 = 65.0%" */
+  /** e.g. "mandatory 2.25/4 x 80 + good-to-have 1.00/1 x 20 = 65.0%" */
   formula: string;
   /** true when one bucket was empty and its weight moved to the other. */
   weights_redistributed: boolean;

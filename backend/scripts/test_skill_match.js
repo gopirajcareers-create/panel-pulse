@@ -16,7 +16,7 @@ const {
   computeMatchScore, reconcileRows, deriveTier, coerceClaimedTier,
   skillMentioned, skillPhraseInResume, groundingRatio, hasContextMarkers,
   looksLikeSkillsList, findSummaryContradictions, coverageSentence,
-  normalizeForMatch, significantTokens,
+  normalizeForMatch, significantTokens, gradeOf, GRADE_CREDIT,
 } = require('../src/services/skillMatchScoring');
 
 const { cleanSkillList } = require('../src/services/screeningService');
@@ -79,6 +79,8 @@ eq('sentence not a skills list', looksLikeSkillsList('Implemented automation tes
 
 console.log('\n=== tier derivation: the model claims, the resume decides ===');
 const tier = (row, skill) => deriveTier(row, skill, RESUME).tier;
+const grade = (row, skill) => deriveTier(row, skill, RESUME).grade;
+const credit = (row, skill) => deriveTier(row, skill, RESUME).credit;
 
 eq('STRONG upheld when named + context',
   tier({ tier: 'STRONG', evidence: 'Implemented automation testing with Playwright to optimize test coverage' }, 'Playwright'),
@@ -106,6 +108,59 @@ eq('soft skill not named in resume caps at PARTIAL',
 eq('NONE upheld when the skill really is absent',
   tier({ tier: 'NONE', evidence: 'Not found in resume.' }, 'Docker'),
   'NONE');
+
+// ── Grades within PARTIAL ──────────────────────────────────────────────────────
+// One flat 0.5 for every partial made "named, on a project, for three years, that the
+// model merely declined to call strong" worth the same as "the skill's name appears
+// nowhere and we inferred it". These pin the three bands apart.
+console.log('\n=== partial grades: how much a PARTIAL is worth ===');
+
+// The conservative-model case. Nothing about the RESUME is weak here — the model hedged
+// and every check passes — so it is paid as a full match.
+const hedged = { tier: 'PARTIAL', evidence: 'designed and maintained the end-to-end regression suite for 3 years using Selenium WebDriver' };
+eq('hedged claim with named skill + context -> PARTIAL_HIGH', grade(hedged, 'Selenium WebDriver'), 'PARTIAL_HIGH');
+eq('PARTIAL_HIGH is paid at full credit', credit(hedged, 'Selenium WebDriver'), 1);
+eq('PARTIAL_HIGH keeps the coarse tier PARTIAL', tier(hedged, 'Selenium WebDriver'), 'PARTIAL');
+eq('an unlowered claim is not reported as demoted',
+  deriveTier(hedged, 'Selenium WebDriver', RESUME).demoted, false);
+
+// Named, but only named.
+const listed = { tier: 'STRONG', evidence: 'Java, Selenium WebDriver, TestNG, Maven' };
+eq('bare skills-list mention -> PARTIAL_MID', grade(listed, 'TestNG'), 'PARTIAL_MID');
+eq('PARTIAL_MID credit', credit(listed, 'TestNG'), 0.75);
+
+// Inferred: the skill's own name is absent, so only the surrounding prose supports it.
+const inferred = { tier: 'STRONG', evidence: 'Coordinated with cross-functional teams including Developers, BAs and Product Owners' };
+eq('skill not named in the resume -> PARTIAL_LOW', grade(inferred, 'Communication'), 'PARTIAL_LOW');
+eq('PARTIAL_LOW credit', credit(inferred, 'Communication'), 0.5);
+
+// Both faults at once must land on the WEAKER grade, not the last one checked.
+eq('unnamed AND contextless -> PARTIAL_LOW, not MID',
+  grade({ tier: 'STRONG', evidence: 'Developers, BAs, Product Owners' }, 'Stakeholder Management'),
+  'PARTIAL_LOW');
+
+// A claimed PARTIAL cut to PARTIAL_LOW keeps the tier it claimed while losing half its
+// credit. Reporting that as undemoted would hide the reasons on the row that needs them.
+eq('a grade-only downgrade is still flagged as demoted',
+  deriveTier(inferred, 'Communication', RESUME).demoted, true);
+eq('every grade carries a one-line reason',
+  Boolean(deriveTier(listed, 'TestNG', RESUME).gradeReason), true);
+
+// looks_like_skills_list is computed as "list-shaped AND no context markers", so it can
+// never fire alone. Pinned here because the grade table reads as though it could.
+eq('list-shape never fires without the no-context check',
+  looksLikeSkillsList('Java, Selenium WebDriver, TestNG, Maven') &&
+  !hasContextMarkers('Java, Selenium WebDriver, TestNG, Maven'), true);
+
+console.log('\n=== gradeOf: stored rows, including pre-grade ones ===');
+eq('explicit grade is used', gradeOf({ tier: 'PARTIAL', grade: 'PARTIAL_MID', credit: 0.75 }), 'PARTIAL_MID');
+// A v2 record graded every partial at 0.5, which is this rubric's LOW — so the credit
+// IS the grade for those rows. Without this, re-rendering an old record shows
+// "2 partial (0 high, 0 mid, 0 low)".
+eq('pre-grade partial read back from its credit', gradeOf({ tier: 'PARTIAL', credit: 0.5 }), 'PARTIAL_LOW');
+eq('pre-tier matched:true -> STRONG', gradeOf({ matched: true }), 'STRONG');
+eq('pre-tier matched:false -> NONE', gradeOf({ matched: false }), 'NONE');
+eq('STRONG needs no inference', gradeOf({ tier: 'STRONG', credit: 1 }), 'STRONG');
 
 // ── False negatives ────────────────────────────────────────────────────────────
 // This block replaces an assertion that read "NONE is trusted without examination".
@@ -137,6 +192,15 @@ eq('promotion records its reason',
 eq('promotion never reaches STRONG',
   cyTier({ tier: 'NONE', evidence: 'Not found in resume.' }, 'Cypress').tier,
   'PARTIAL');
+// PARTIAL_MID, not HIGH: the name is verbatim in the resume, but no reading of the
+// surrounding context exists to credit — the model said the skill was absent.
+eq('a promoted row is graded MID', cyTier({ tier: 'NONE', evidence: 'Not found in resume.' }, 'Cypress').grade,
+  'PARTIAL_MID');
+// A skill the model never examined cannot grade above LOW however plainly the resume
+// names it. Nothing read the surrounding text, so there is no depth claim to credit.
+eq('a skill the model never reported is graded LOW',
+  deriveTier({}, 'Cypress', CYPRESS_RESUME, { reportedByModel: false }).grade,
+  'PARTIAL_LOW');
 
 // The guard against over-promotion. skillMentioned matches these words scattered across
 // the resume, but promotion requires them ADJACENT — otherwise a genuine gap gets credit.
@@ -182,12 +246,23 @@ eq('empty summary -> no contradictions', findSummaryContradictions('', noneRows)
 
 console.log('\n=== coverage sentence is derived, so it cannot disagree ===');
 const cov = computeMatchScore({
-  mandatoryRows: [{ tier: 'STRONG', credit: 1 }, { tier: 'PARTIAL', credit: 0.5 }, { tier: 'NONE', credit: 0 }],
-  goodToHaveRows: [{ tier: 'NONE', credit: 0 }],
+  mandatoryRows: [
+    { tier: 'STRONG', grade: 'STRONG', credit: 1 },
+    { tier: 'PARTIAL', grade: 'PARTIAL_HIGH', credit: 1 },
+    { tier: 'PARTIAL', grade: 'PARTIAL_MID', credit: 0.75 },
+    { tier: 'PARTIAL', grade: 'PARTIAL_LOW', credit: 0.5 },
+    { tier: 'NONE', grade: 'NONE', credit: 0 },
+  ],
+  goodToHaveRows: [{ tier: 'NONE', grade: 'NONE', credit: 0 }],
 });
-eq('coverage sentence counts every tier',
+// "3 partial" spans 1.5 credits of range now, so the count alone cannot be reconciled
+// with credit_earned — the sentence breaks the partials out by what they are worth.
+eq('coverage sentence breaks partials out by credit',
   coverageSentence(cov.breakdown),
-  'Mandatory: 1 strong, 1 partial, 1 not evidenced (of 3). Good-to-have: 0 strong, 0 partial, 1 not evidenced (of 1).');
+  'Mandatory: 1 strong, 3 partial (1 at full credit, 1 at 0.75, 1 at 0.5), 1 not evidenced (of 5). ' +
+  'Good-to-have: 0 strong, 0 partial, 1 not evidenced (of 1).');
+eq('partial census sums the three grades', cov.breakdown.mandatory.partial, 3);
+eq('credit_earned matches the grades', cov.breakdown.mandatory.credit_earned, 3.25);
 eq('no skills -> says so',
   coverageSentence(computeMatchScore({ mandatoryRows: [], goodToHaveRows: [] }).breakdown),
   'No skills were available to evaluate.');
@@ -249,7 +324,13 @@ const recCase = reconcileRows(
 eq('case-drifted skill name still matched', recCase.missing, []);
 
 console.log('\n=== score arithmetic ===');
-const row = (tier) => ({ tier, credit: tier === 'STRONG' ? 1 : tier === 'PARTIAL' ? 0.5 : 0 });
+// Rows are built from the GRADE, since that is where credit comes from. 'PARTIAL' on its
+// own is no longer a scoreable statement.
+const row = (grade) => ({
+  tier: grade === 'STRONG' ? 'STRONG' : grade === 'NONE' ? 'NONE' : 'PARTIAL',
+  grade,
+  credit: GRADE_CREDIT[grade],
+});
 
 eq('all strong in both buckets -> 100',
   computeMatchScore({
@@ -260,20 +341,39 @@ eq('all strong in both buckets -> 100',
 eq('all none -> 0',
   computeMatchScore({ mandatoryRows: [row('NONE')], goodToHaveRows: [row('NONE')] }).matchScore, 0);
 
-// 3/3 mandatory + 1/2 good-to-have = 70 + 15 = 85: the exact figure from the reported
-// screenshot, so the new arithmetic is verifiably continuous with the old on the case
-// where the old code happened to be right.
-eq('3/3 mandatory + 1/2 good-to-have -> 85',
+// The bucket weights, pinned on a case where each bucket is exactly half-earned or fully
+// earned so the split is readable in the number: 80 + 10 = 90.
+eq('3/3 mandatory + 1/2 good-to-have -> 90',
   computeMatchScore({
     mandatoryRows: [row('STRONG'), row('STRONG'), row('STRONG')],
     goodToHaveRows: [row('STRONG'), row('NONE')],
-  }).matchScore, 85);
+  }).matchScore, 90);
 
-// The reason grading exists: a borderline skill now moves the score by half a slot
-// rather than flipping a full 70/N.
-eq('partial mandatory scores between none and strong',
-  computeMatchScore({ mandatoryRows: [row('PARTIAL'), row('STRONG')], goodToHaveRows: [row('STRONG')] }).matchScore,
-  Math.round(0.75 * 70 + 30));
+// Good-to-have alone must not be able to carry a candidate into Eligible. 3 of 5
+// mandatory plus a flawless good-to-have list read 72% and "Eligible" under 70/30 —
+// two must-have skills unevidenced. At 80/20 the same candidate reads 68%.
+const gapFiller = computeMatchScore({
+  mandatoryRows: [row('STRONG'), row('STRONG'), row('STRONG'), row('NONE'), row('NONE')],
+  goodToHaveRows: [row('STRONG'), row('STRONG')],
+});
+eq('3/5 mandatory + all good-to-have -> 68, not 72', gapFiller.matchScore, 68);
+eq('...and it is not Eligible', gapFiller.status, 'Partially Eligible');
+
+// Full mandatory coverage with nothing good-to-have evidenced clears the band on its
+// own. Under 70/30 that candidate sat exactly on 70, one rounding step from Partially
+// Eligible — a reservation the evidence did not support.
+eq('5/5 mandatory alone -> 80',
+  computeMatchScore({
+    mandatoryRows: [row('STRONG'), row('STRONG'), row('STRONG'), row('STRONG'), row('STRONG')],
+    goodToHaveRows: [row('NONE'), row('NONE')],
+  }).matchScore, 80);
+
+// The three partial grades must produce three different scores on identical shapes.
+const oneMandatory = (g) => computeMatchScore({ mandatoryRows: [row(g)], goodToHaveRows: [row('NONE')] }).matchScore;
+eq('PARTIAL_HIGH scores as a full match', oneMandatory('PARTIAL_HIGH'), 80);
+eq('PARTIAL_MID scores three-quarters', oneMandatory('PARTIAL_MID'), 60);
+eq('PARTIAL_LOW scores half', oneMandatory('PARTIAL_LOW'), 40);
+eq('NONE scores nothing', oneMandatory('NONE'), 0);
 
 console.log('\n=== empty-bucket weight redistribution ===');
 const noGth = computeMatchScore({ mandatoryRows: [row('STRONG'), row('STRONG')], goodToHaveRows: [] });
@@ -281,7 +381,7 @@ eq('no good-to-have skills -> mandatory carries 100', noGth.matchScore, 100);
 eq('redistribution flagged', noGth.breakdown.weights_redistributed, true);
 eq('mandatory weight raised to 100', noGth.breakdown.mandatory.weight, 100);
 
-const noMandatory = computeMatchScore({ mandatoryRows: [], goodToHaveRows: [row('PARTIAL')] });
+const noMandatory = computeMatchScore({ mandatoryRows: [], goodToHaveRows: [row('PARTIAL_LOW')] });
 eq('good-to-have alone carries 100', noMandatory.matchScore, 50);
 
 const nothing = computeMatchScore({ mandatoryRows: [], goodToHaveRows: [] });
@@ -291,23 +391,38 @@ eq('no skills at all -> Not Screenable', nothing.status, 'Not Screenable');
 console.log('\n=== status bands derive from the score, never independently ===');
 const status = (m, g) => computeMatchScore({ mandatoryRows: m, goodToHaveRows: g }).status;
 eq('100 -> Eligible', status([row('STRONG')], [row('STRONG')]), 'Eligible');
-eq('70 -> Eligible (boundary)', status([row('STRONG')], [row('NONE')]), 'Eligible');
-eq('50 -> Partially Eligible', status([row('PARTIAL')], [row('PARTIAL')]), 'Partially Eligible');
-eq('35 -> Ineligible', status([row('PARTIAL')], [row('NONE')]), 'Ineligible');
+eq('80 -> Eligible', status([row('STRONG')], [row('NONE')]), 'Eligible');
+eq('70 -> Eligible (boundary)', status([row('PARTIAL_MID')], [row('PARTIAL_HIGH')]), 'Eligible');
+eq('60 -> Partially Eligible', status([row('PARTIAL_MID')], [row('NONE')]), 'Partially Eligible');
+eq('40 -> Partially Eligible (boundary)', status([row('PARTIAL_LOW')], [row('NONE')]), 'Partially Eligible');
+eq('20 -> Ineligible', status([row('NONE')], [row('STRONG')]), 'Ineligible');
 eq('0 -> Ineligible', status([row('NONE')], [row('NONE')]), 'Ineligible');
 
 console.log('\n=== breakdown is auditable by hand ===');
 const audited = computeMatchScore({
-  mandatoryRows: [row('STRONG'), row('PARTIAL'), row('NONE')],
+  mandatoryRows: [row('STRONG'), row('PARTIAL_MID'), row('PARTIAL_LOW'), row('NONE')],
   goodToHaveRows: [row('STRONG')],
 });
-eq('mandatory credit summed', audited.breakdown.mandatory.credit_earned, 1.5);
+eq('mandatory credit summed', audited.breakdown.mandatory.credit_earned, 2.25);
 eq('tier census: strong', audited.breakdown.mandatory.strong, 1);
-eq('tier census: partial', audited.breakdown.mandatory.partial, 1);
+eq('tier census: partial', audited.breakdown.mandatory.partial, 2);
+eq('grade census: high', audited.breakdown.mandatory.partial_high, 0);
+eq('grade census: mid', audited.breakdown.mandatory.partial_mid, 1);
+eq('grade census: low', audited.breakdown.mandatory.partial_low, 1);
 eq('tier census: none', audited.breakdown.mandatory.none, 1);
+eq('bucket points recorded', audited.breakdown.mandatory.points, 45);
 eq('formula states the arithmetic',
-  audited.breakdown.formula, 'mandatory 1.50/3 x 70 + good-to-have 1.00/1 x 30 = 65.0%');
+  audited.breakdown.formula, 'mandatory 2.25/4 x 80 + good-to-have 1.00/1 x 20 = 65.0%');
 eq('formula matches the score', audited.matchScore, 65);
+
+// Rows stored before graded partials carry no `grade`, so the census has to be inferred
+// from their credit or an old record re-renders as "1 partial (0 high, 0 mid, 0 low)".
+const legacy = computeMatchScore({
+  mandatoryRows: [{ tier: 'STRONG', credit: 1 }, { tier: 'PARTIAL', credit: 0.5 }],
+  goodToHaveRows: [{ matched: false }],
+});
+eq('pre-grade rows still produce a census that adds up',
+  [legacy.breakdown.mandatory.partial, legacy.breakdown.mandatory.partial_low], [1, 1]);
 
 console.log('\n=== skill-list cleaning: the noise that used to be scored ===');
 // Each of these reached the UI as a "skill" and, worse, was scored — an unmatchable

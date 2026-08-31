@@ -28,7 +28,9 @@
  *      checkmarks beside it.
  *   4. Borderline evidence flipped a boolean, moving the total by 70/N. Now graded
  *      STRONG / PARTIAL / NONE, so a borderline skill moves the score by half that
- *      and lands in the tier that describes it.
+ *      and lands in the tier that describes it. PARTIAL then carried a GRADE too —
+ *      see skillMatchScoring's header for why one number could not cover the range
+ *      from "named, on a three-year project" to "inferred from nearby prose".
  *
  * ── Skill provenance ─────────────────────────────────────────────────────────
  * jdAnalyzerService only reports mandatory skills when the JD literally contains
@@ -315,6 +317,11 @@ Rules you must follow:
    - "STRONG"  — the resume names the skill AND shows it being used: a duration, a project, an action, or a measurable outcome.
    - "PARTIAL" — the skill appears but thinly: only inside a skills list, or only implied by related work.
    - "NONE"    — the skill does not appear in the resume.
+   The tier you report is a CEILING, not the final grade. It is re-checked against the
+   resume text and lowered where the text does not support it — and a PARTIAL the resume
+   fully backs (named, with a duration, project, action or outcome) is credited as a FULL
+   match. So report the tier you actually see: rounding a thin match up to STRONG gains
+   the candidate nothing and costs them the row if the check fails.
 4. Report one row for EVERY skill you are given, in the order given. Never omit a skill.
 
 Return ONLY a valid JSON object. No markdown fences, no commentary outside the JSON.
@@ -598,7 +605,12 @@ async function runScreening({ jobId, candidateName = '', jdText = '', resumeText
       // which lowers the score for a reason unrelated to the candidate.
       resume_chars_dropped: Math.max(0, resume.length - MAX_RESUME_CHARS),
       scoring_method: 'skill-match-tier',
-      rubric_version: 'screening-v2-tiered',
+      // v3: mandatory 80 / good-to-have 20 (was 70/30), and PARTIAL carries a grade
+      // worth 1.0 / 0.75 / 0.5 instead of a flat 0.5. Both changes push scores UP, so a
+      // v2 record and a v3 record of the same resume are not comparable numbers and the
+      // version is what says so — the alternative is a re-screen that looks like the
+      // candidate improved.
+      rubric_version: 'screening-v3-graded-partials',
     },
 
     screenedAt: new Date().toISOString(),

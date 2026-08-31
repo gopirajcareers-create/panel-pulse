@@ -1,7 +1,8 @@
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import type { PipelineDetail, SkillMatchRow, SkillTier } from '@/lib/api/pipeline.api';
+import type { PipelineDetail, SkillBucketBreakdown, SkillMatchRow, SkillTier } from '@/lib/api/pipeline.api';
 import { dedupeEvidence } from './evidence';
+import { GRADE_LABEL, bucketBreakupOf, gradeOf, num, tierOfGrade } from './skillGrade';
 
 export type ReportStageId = 'stage1' | 'stage2' | 'stage3' | 'stage4' | 'overall';
 
@@ -49,6 +50,10 @@ function scoreColour(score: number, max = 10): string {
  * who cannot ask the UI a follow-up question, so it must not flatten Strong and Partial
  * into one tick — that ambiguity is precisely what made the on-screen coverage look
  * inconsistent to the reader.
+ *
+ * The glyph and colour are per TIER, because a reader scanning the column needs three
+ * states, not five. The credit rides in the label (GRADE_LABEL) next to it, so two amber
+ * rows worth 1.0 and 0.5 are still distinguishable without a tooltip the paper cannot show.
  */
 const REPORT_TIER: Record<SkillTier, { glyph: string; color: string; label: string }> = {
   STRONG:  { glyph: '✓', color: '#059669', label: 'Strong' },
@@ -57,14 +62,14 @@ const REPORT_TIER: Record<SkillTier, { glyph: string; color: string; label: stri
 };
 
 /** Pre-tier records carry only `matched`; they were never graded, so no PARTIAL. */
-function reportTierOf(row: Pick<SkillMatchRow, 'tier' | 'matched'>): SkillTier {
-  if (row.tier === 'STRONG' || row.tier === 'PARTIAL' || row.tier === 'NONE') return row.tier;
-  return row.matched ? 'STRONG' : 'NONE';
+function reportTierOf(row: Partial<SkillMatchRow>): SkillTier {
+  return tierOfGrade(gradeOf(row));
 }
 
 function skillRowsHTML(rows: SkillMatchRow[]): string {
   return (rows || []).map(item => {
-    const t = REPORT_TIER[reportTierOf(item)];
+    const grade = gradeOf(item);
+    const t = REPORT_TIER[tierOfGrade(grade)];
     const inferred = item.source === 'ai-suggested'
       ? ' <span style="font-size:9px;color:#7c3aed;font-weight:700;">(AI-INFERRED)</span>'
       : '';
@@ -77,7 +82,7 @@ function skillRowsHTML(rows: SkillMatchRow[]): string {
     <tr>
       <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;white-space:nowrap;">
         <span style="display:inline-block;width:18px;height:18px;border-radius:50%;background:${t.color};color:white;text-align:center;line-height:18px;font-size:11px;font-weight:bold;">${t.glyph}</span>
-        <span style="font-size:10px;color:${t.color};font-weight:700;margin-left:4px;">${t.label}</span>
+        <span style="font-size:10px;color:${t.color};font-weight:700;margin-left:4px;">${GRADE_LABEL[grade]}</span>
       </td>
       <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;font-weight:600;">${esc(item.skill)}${inferred}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #f3f4f6;color:#6b7280;font-size:11px;">${esc(item.evidence)}</td>
@@ -102,19 +107,49 @@ function tierCensusHTML(rows: SkillMatchRow[]): string {
   return `<span style="font-size:10px;">${parts.join('<span style="color:#d1d5db;"> · </span>')}</span>`;
 }
 
-function skillTableHTML(title: string, rows: SkillMatchRow[], weight: number | null, emptyNote: string): string {
+/**
+ * The bucket's contribution, spelled out: weight, credit earned against how many skills,
+ * and the points that produced.
+ *
+ * The report deliberately omits the whole-score formula (see generateStage1HTML), but a
+ * bucket that says only "— 80% of the match score" cannot be reconciled with the total by
+ * a reader who was forwarded the PDF and cannot open the tool. This is the one line that
+ * makes the mandatory coverage add up on paper.
+ */
+function bucketBreakupHTML(bucket: SkillBucketBreakdown | undefined, rows: SkillMatchRow[],
+                           redistributed: boolean): string {
+  const b = bucketBreakupOf(bucket, rows);
+  if (!b || !b.skills) return '';
+
+  // Assembled without line breaks inside the sentences: the phrases are the thing a reader
+  // searches the document for, and a newline in the middle of "of the match score" makes
+  // them unfindable in the HTML even though the rendered page looks identical.
+  const line = `Weighted <strong style="color:#374151;">${b.weight}%</strong> of the match score` +
+    (redistributed ? ' (raised because the other list is empty)' : '') +
+    ` &middot; <strong style="color:#374151;">${num(b.creditEarned)}</strong> credit earned of ` +
+    `${b.skills} ${b.skills === 1 ? 'skill' : 'skills'} ` +
+    `&rarr; <strong style="color:#b45309;">${num(b.points)} pts</strong>`;
+  const split = b.partialSplit ? `<br/>Partial credit: ${esc(b.partialSplit)}` : '';
+
+  return `
+        <p style="font-size:10px;color:#6b7280;margin:0 0 8px;line-height:1.5;">${line}${split}</p>`;
+}
+
+function skillTableHTML(title: string, rows: SkillMatchRow[], bucket: SkillBucketBreakdown | undefined,
+                        redistributed: boolean, emptyNote: string): string {
   return `
       <div class="pdf-block" style="margin-bottom:24px;">
         <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:8px;">
           <h3 style="font-size:12px;font-weight:700;color:#111827;text-transform:uppercase;letter-spacing:0.05em;">
-            ${esc(title)}${weight != null ? ` <span style="font-weight:500;color:#6b7280;text-transform:none;letter-spacing:0;">— ${weight}% of the match score</span>` : ''}
+            ${esc(title)}
           </h3>
           ${tierCensusHTML(rows)}
         </div>
+        ${bucketBreakupHTML(bucket, rows, redistributed)}
         <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;background:white;">
           <thead>
             <tr style="background:#f9fafb;">
-              <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;width:100px;">Coverage</th>
+              <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;width:118px;">Coverage</th>
               <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;">Skill</th>
               <th style="padding:8px 10px;text-align:left;font-size:10px;color:#6b7280;text-transform:uppercase;">Evidence</th>
             </tr>
@@ -175,11 +210,11 @@ function generateStage1HTML(data: PipelineDetail): string {
           </ul>
         </div>` : '';
 
-  // Read for the per-table weights only. The derivation itself — the
-  // "mandatory 7.00/12 x 70 + …" line and the note on how a tier converts to credit —
-  // is not printed: the report goes to readers who need the verdict and the evidence
-  // behind it, and the arithmetic read as the report explaining its own machinery.
-  // It is still on screen, and `scoreBreakdown` is stored on the record either way.
+  // Read for the per-bucket breakup under each table. The combined derivation — the
+  // "mandatory 7.00/12 x 80 + good-to-have … = 65.0%" line — is still not printed: the
+  // report goes to readers who need the verdict and the evidence behind it, and the whole
+  // formula read as the report explaining its own machinery. Each bucket's own arithmetic
+  // is printed, because that is what makes the coverage tables add up on paper.
   const b = analysis.scoreBreakdown;
 
   return `
@@ -225,10 +260,12 @@ function generateStage1HTML(data: PipelineDetail): string {
       </div>
 
       ${skillTableHTML('Mandatory Skills Coverage', analysis.mandatorySkillsMatch,
-        b?.mandatory.weight ?? null, 'No mandatory skills were identified for this role')}
+        b?.mandatory, Boolean(b?.weights_redistributed),
+        'No mandatory skills were identified for this role')}
 
       ${skillTableHTML('Good-to-Have Skills Coverage', analysis.additionalSkillsMatch,
-        b?.goodToHave.weight ?? null, prov?.goodToHaveNotice || 'The JD labels no skills as good-to-have.')}
+        b?.goodToHave, Boolean(b?.weights_redistributed),
+        prov?.goodToHaveNotice || 'The JD labels no skills as good-to-have.')}
     </div>
   `;
 }
