@@ -34,7 +34,18 @@
       "Bash(git rev-list *)",
       "Bash(gh api *)",
       "Bash(node scripts/_diag_l2_ctx.js)",
-      "Bash(node scripts/_verify_resilience.js)"
+      "Bash(node scripts/_verify_resilience.js)",
+      "Bash(git merge *)",
+      "Bash(node --check src/services/l1ScoringService.js)",
+      "Bash(node --check src/services/l2ScoringService.js)",
+      "Bash(node -e ' *)",
+      "Bash(timeout 15 curl -s -m 10 http://10.10.160.51:11434/api/tags -o /dev/null -w \"HTTP %{http_code} in %{time_total}s\\\\n\")",
+      "Bash(node scripts/rescore_l1.js --job jd1005 --candidate Mathews)",
+      "Bash(awk '/async function runL1Evaluation/,0' src/services/l1ScoringService.js)",
+      "Bash(node --check scripts/rescore_l1.js)",
+      "Bash(node scripts/rescore_l1.js --job JD3829 --candidate \"Alex Mercer\")",
+      "Bash(awk '/const L1_DIMENSIONS/,/^};/' src/services/l1ScoringService.js)",
+      "Bash(node scripts/test_evidence_tiers.js)"
     ],
     "additionalDirectories": [
       "C:\\Program Files\\Git\\etc"
